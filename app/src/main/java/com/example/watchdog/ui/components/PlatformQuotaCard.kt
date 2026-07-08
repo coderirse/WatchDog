@@ -110,42 +110,43 @@ private fun QuotaContent(q: QuotaInfo) {
             GlmBar(q)
         }
 
-        // 模型用量明细（可展开）
-        if (q.hasModelUsage) {
-            Spacer(modifier = Modifier.height(8.dp))
-            HorizontalDivider()
-            Spacer(modifier = Modifier.height(4.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth().clickable { expanded = !expanded },
-                verticalAlignment = Alignment.CenterVertically
-            ) {
+        // 模型用量明细 — 始终可展开
+        Spacer(modifier = Modifier.height(8.dp))
+        HorizontalDivider()
+        Spacer(modifier = Modifier.height(4.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth().clickable { expanded = !expanded },
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = if (q.hasModelUsage) "调用明细 (${q.modelUsages.size}项)" else "调用明细",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.weight(1f)
+            )
+            if (q.hasModelUsage) {
                 Text(
-                    "调用明细 (${q.modelUsages.size}项)",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.weight(1f)
-                )
-                Text(
-                    "共 ${formatNumber(q.totalRequestCount)}次调用  ${formatNumber(q.totalTokensUsed)} Tokens",
+                    text = "共 ${formatNumber(q.totalRequestCount)}次调用  ${formatNumber(q.totalTokensUsed)} Tokens",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                Text(
-                    if (expanded) "▲" else "▼",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.clickable { expanded = !expanded }
-                )
             }
-            AnimatedVisibility(
-                visible = expanded,
-                enter = expandVertically(), exit = shrinkVertically()
-            ) {
-                Column {
-                    Spacer(modifier = Modifier.height(4.dp))
-                    HorizontalDivider(thickness = 0.5.dp)
-                    Spacer(modifier = Modifier.height(8.dp))
-                    // 表头
+            Text(
+                if (expanded) "▲" else "▼",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.clickable { expanded = !expanded }
+            )
+        }
+        AnimatedVisibility(
+            visible = expanded,
+            enter = expandVertically(), exit = shrinkVertically()
+        ) {
+            Column {
+                Spacer(modifier = Modifier.height(4.dp))
+                HorizontalDivider(thickness = 0.5.dp)
+                Spacer(modifier = Modifier.height(8.dp))
+                if (q.hasModelUsage) {
                     Row(modifier = Modifier.fillMaxWidth()) {
                         Text("模型", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline, modifier = Modifier.weight(2f))
                         Text("调用", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline, modifier = Modifier.weight(1f))
@@ -153,9 +154,9 @@ private fun QuotaContent(q: QuotaInfo) {
                         Text("费用", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline, modifier = Modifier.weight(1f))
                     }
                     Spacer(modifier = Modifier.height(4.dp))
-                    q.modelUsages.forEach { mu ->
-                        ModelUsageRow(mu)
-                    }
+                    q.modelUsages.forEach { mu -> ModelUsageRow(mu) }
+                } else {
+                    ModelUsageEmptyHint(q.platform)
                 }
             }
         }
@@ -217,3 +218,18 @@ private fun formatNumber(n: Long): String = when {
 }
 
 private fun formatTime(t: Long): String = SimpleDateFormat("MM-dd HH:mm:ss", Locale.getDefault()).format(Date(t))
+
+@Composable
+private fun ModelUsageEmptyHint(platform: PlatformType) {
+    val hint = when (platform) {
+        PlatformType.DEEPSEEK -> "DeepSeek 未开放用量查询接口，无法获取按模型调用明细。\n如需查看，请登录 platform.deepseek.com → Usage 页面。"
+        PlatformType.KIMI -> "Kimi 未开放用量查询接口，无法获取按模型调用明细。\n如需查看，请登录 platform.moonshot.cn → 费用明细。"
+        PlatformType.GLM -> "GLM 资源包数据暂未解析到模型明细。\n如需查看，请登录 open.bigmodel.cn → 费用中心。"
+        PlatformType.SILICONFLOW -> "硅基流动 billing 接口仅返回月度总额，暂无按模型拆分。\n如需查看，请登录 siliconflow.cn → 费用账单。"
+    }
+    Text(
+        text = hint,
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.outline
+    )
+}
