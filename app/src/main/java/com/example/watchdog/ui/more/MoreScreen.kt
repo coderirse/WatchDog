@@ -19,7 +19,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -173,7 +172,12 @@ fun MoreScreen(
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Filled.Star, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(24.dp))
+                        // GitHub Octocat logo from LobeHub CDN
+                        coil.compose.AsyncImage(
+                            model = "https://registry.npmmirror.com/@lobehub/icons-static-png/latest/files/dark/github.png",
+                            contentDescription = "GitHub",
+                            modifier = Modifier.size(24.dp)
+                        )
                         Spacer(modifier = Modifier.width(12.dp))
                         Text("GitHub 仓库", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
                     }
@@ -204,6 +208,7 @@ fun MoreScreen(
                 text = "© 2026 caeamer. All rights reserved.",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.outline.copy(alpha = 0.6f),
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                 modifier = Modifier.fillMaxWidth().padding(bottom = 32.dp)
             )
         }

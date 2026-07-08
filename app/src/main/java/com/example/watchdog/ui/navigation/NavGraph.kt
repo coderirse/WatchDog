@@ -3,7 +3,7 @@ package com.example.watchdog.ui.navigation
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -41,7 +41,7 @@ fun WatchDogNavGraph() {
 
     val bottomItems = listOf(
         BottomNavItem(Routes.DASHBOARD, "额度", Icons.Filled.Home),
-        BottomNavItem(Routes.MORE, "更多", Icons.Filled.Star)
+        BottomNavItem(Routes.MORE, "更多", Icons.Filled.Settings)
     )
 
     Scaffold(
