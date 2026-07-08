@@ -1,3 +1,24 @@
-# WatchDog 项目自定义 ProGuard 规则
-# 当前主要依赖 Compose、Retrofit、Gson，先保持最小规则集，
-# 后续如出现反射相关混淆问题，再按具体报错补充。
+# WatchDog ProGuard 规则
+
+# === Gson ===
+-keepattributes Signature
+-keepattributes *Annotation*
+-dontwarn sun.misc.**
+-keep class com.example.watchdog.data.api.** { *; }
+-keep class com.google.gson.** { *; }
+
+# === Retrofit + OkHttp ===
+-keepattributes RuntimeVisibleAnnotations, RuntimeVisibleParameterAnnotations
+-dontwarn retrofit2.**
+-keep class retrofit2.** { *; }
+-keepclasseswithmembers class * {
+    @retrofit2.http.* <methods>;
+}
+-dontwarn okhttp3.**
+-dontwarn okio.**
+
+# === Coil ===
+-dontwarn coil.**
+
+# === Compose ===
+-dontwarn androidx.compose.**
