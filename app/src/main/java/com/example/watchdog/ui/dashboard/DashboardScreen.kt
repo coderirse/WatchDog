@@ -155,7 +155,7 @@ private fun QuotaList(quotas: List<QuotaInfo>) {
             )
             Spacer(modifier = Modifier.height(16.dp))
             Text(
-                text = "© 2026 caeamer",
+                text = "© 2026 caeamer. All rights reserved.",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.outline.copy(alpha = 0.6f),
                 textAlign = TextAlign.Center,
