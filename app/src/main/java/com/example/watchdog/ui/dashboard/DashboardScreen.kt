@@ -153,14 +153,6 @@ private fun QuotaList(quotas: List<QuotaInfo>) {
                 textAlign = TextAlign.Center,
                 modifier = Modifier.fillMaxWidth()
             )
-            Spacer(modifier = Modifier.height(16.dp))
-            Text(
-                text = "© 2026 caeamer. All rights reserved.",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.outline.copy(alpha = 0.6f),
-                textAlign = TextAlign.Center,
-                modifier = Modifier.fillMaxWidth()
-            )
             Spacer(modifier = Modifier.height(72.dp))
         }
     }
