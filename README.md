@@ -33,7 +33,7 @@
 
 ## 使用方式
 
-1. 从 [Release](https://github.com/你的用户名/WatchDog/releases) 下载最新 APK 安装
+1. 从 [Release](https://github.com/coderirse/WatchDog/releases) 下载最新 APK 安装
 2. 点击右下角 ⚙️ 按钮进入 API Key 管理
 3. 为各平台填入 API Key：
    - DeepSeek: [获取API Key](https://platform.deepseek.com/api_keys)
