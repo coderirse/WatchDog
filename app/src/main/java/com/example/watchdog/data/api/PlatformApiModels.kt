@@ -2,7 +2,22 @@ package com.example.watchdog.data.api
 
 import com.google.gson.annotations.SerializedName
 
-// ===== DeepSeek =====
+// ===== DeepSeek 按模型用量 =====
+
+data class DeepSeekUsageResponse(
+    @SerializedName("data") val data: List<DeepSeekModelUsage>?
+)
+
+data class DeepSeekModelUsage(
+    val model: String?,
+    @SerializedName("request_count") val requestCount: Long?,
+    @SerializedName("total_tokens") val totalTokens: Long?,
+    @SerializedName("input_tokens") val inputTokens: Long?,
+    @SerializedName("output_tokens") val outputTokens: Long?,
+    val cost: String?
+)
+
+// ===== DeepSeek 余额 =====
 
 data class DeepSeekBalanceResponse(
     @SerializedName("is_available") val isAvailable: Boolean,

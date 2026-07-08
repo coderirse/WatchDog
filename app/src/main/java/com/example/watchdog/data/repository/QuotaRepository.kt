@@ -5,10 +5,13 @@ import com.example.watchdog.data.api.GlmApi
 import com.example.watchdog.data.api.KimiApi
 import com.example.watchdog.data.api.SiliconFlowApi
 import com.example.watchdog.data.local.SettingsStore
+import com.example.watchdog.data.model.ModelUsage
 import com.example.watchdog.data.model.PlatformType
 import com.example.watchdog.data.model.QuotaInfo
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import java.time.LocalDate
+import java.time.format.DateTimeFormatter
 
 class QuotaRepository(
     private val settingsStore: SettingsStore,
@@ -17,6 +20,8 @@ class QuotaRepository(
     private val glmApi: GlmApi,
     private val siliconFlowApi: SiliconFlowApi
 ) {
+    private val dateFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd")
+
     suspend fun fetchAllQuotas(): List<QuotaInfo> = coroutineScope {
         val configuredPlatforms = settingsStore.getConfiguredPlatforms()
         val allPlatforms = PlatformType.entries
@@ -35,30 +40,25 @@ class QuotaRepository(
     suspend fun fetchPlatformQuota(platform: PlatformType): QuotaInfo {
         return try {
             val apiKey = settingsStore.getApiKey(platform)
-            if (apiKey == null) {
-                return QuotaInfo.notConfigured(platform)
-            }
+            if (apiKey == null) return QuotaInfo.notConfigured(platform)
             val authHeader = "Bearer $apiKey"
 
             val rawQuota = when (platform) {
-                PlatformType.DEEPSEEK -> fetchDeepSeekBalance(authHeader, platform)
+                PlatformType.DEEPSEEK -> fetchDeepSeek(authHeader, platform)
                 PlatformType.KIMI -> fetchKimiBalance(authHeader, platform)
                 PlatformType.GLM -> fetchGlmTokenAccounts(authHeader, platform)
-                PlatformType.SILICONFLOW -> fetchSiliconFlowInfo(authHeader, platform)
+                PlatformType.SILICONFLOW -> fetchSiliconFlow(authHeader, platform)
             }
 
-            // DeepSeek/Kimi 无可用量API，用月初余额追踪计算本月消耗
-            // GLM 从 tokenAccounts 接口直接获取，SiliconFlow 从 billing/usage 获取
-            if (platform != PlatformType.GLM && platform != PlatformType.SILICONFLOW
-                && rawQuota.isAvailable && rawQuota.errorMessage == null) {
-                val currentBalance = rawQuota.totalBalance.toDoubleOrNull()
-                if (currentBalance != null) {
-                    val monthlyUsage = settingsStore.recordBalanceAndGetMonthlyUsage(
-                        platform, currentBalance
-                    )
+            // DeepSeek/Kimi 无可用量API，用本地月初余额追踪
+            if ((platform == PlatformType.DEEPSEEK || platform == PlatformType.KIMI)
+                && rawQuota.isAvailable && rawQuota.errorMessage == null
+            ) {
+                val balance = rawQuota.totalBalance.toDoubleOrNull()
+                if (balance != null) {
+                    val usage = settingsStore.recordBalanceAndGetMonthlyUsage(platform, balance)
                     rawQuota.copy(
-                        monthlyUsage = if (monthlyUsage < 0.01) "0.00"
-                        else String.format("%.2f", monthlyUsage)
+                        monthlyUsage = if (usage < 0.01) "0.00" else String.format("%.2f", usage)
                     )
                 } else rawQuota
             } else rawQuota
@@ -67,139 +67,156 @@ class QuotaRepository(
         }
     }
 
-    // ===== DeepSeek =====
+    // ===== DeepSeek：余额 + 尝试获取用量 =====
 
-    private suspend fun fetchDeepSeekBalance(authHeader: String, platform: PlatformType): QuotaInfo {
+    private suspend fun fetchDeepSeek(authHeader: String, platform: PlatformType): QuotaInfo {
         val response = deepSeekApi.getBalance(authHeader)
-        if (response.isSuccessful) {
-            val body = response.body()
-            val balance = body?.balanceInfos?.firstOrNull()
-            return QuotaInfo(
-                platform = platform,
-                isAvailable = body?.isAvailable ?: false,
-                isConfigured = true,
-                totalBalance = balance?.totalBalance ?: "0.00",
-                currency = balance?.currency ?: "CNY"
-            )
-        } else {
-            return QuotaInfo.error(platform, "HTTP ${response.code()}")
+        if (!response.isSuccessful) return QuotaInfo.error(platform, "HTTP ${response.code()}")
+
+        val body = response.body()
+        val balance = body?.balanceInfos?.firstOrNull()
+
+        // 尝试获取本月按模型用量
+        var modelUsages = emptyList<ModelUsage>()
+        var monthlyTokens = 0L
+        try {
+            val now = LocalDate.now()
+            val start = now.withDayOfMonth(1).format(dateFormatter)
+            val end = now.format(dateFormatter)
+            val usageResp = deepSeekApi.getUsage(authHeader, start, end)
+            if (usageResp.isSuccessful) {
+                val usageData = usageResp.body()?.data
+                if (usageData != null) {
+                    modelUsages = usageData.mapNotNull { item ->
+                        val model = item.model ?: return@mapNotNull null
+                        val tokens = item.totalTokens ?: 0L
+                        monthlyTokens += tokens
+                        ModelUsage(
+                            modelName = model,
+                            requestCount = item.requestCount ?: 0,
+                            totalTokens = tokens,
+                            inputTokens = item.inputTokens ?: 0,
+                            outputTokens = item.outputTokens ?: 0,
+                            cost = item.cost ?: "0.00"
+                        )
+                    }
+                }
+            }
+        } catch (_: Exception) {
+            // /v1/usage 可能不存在，静默回退
         }
+
+        return QuotaInfo(
+            platform = platform,
+            isAvailable = body?.isAvailable ?: false,
+            isConfigured = true,
+            totalBalance = balance?.totalBalance ?: "0.00",
+            monthlyUsage = formatTokenCount(monthlyTokens),
+            currency = balance?.currency ?: "CNY",
+            modelUsages = modelUsages
+        )
     }
 
-    // ===== Kimi (Moonshot) =====
+    // ===== Kimi =====
 
     private suspend fun fetchKimiBalance(authHeader: String, platform: PlatformType): QuotaInfo {
         val response = kimiApi.getBalance(authHeader)
-        if (response.isSuccessful) {
-            val body = response.body()
-            val data = body?.data
-            val totalBalance = data?.availableBalance ?: 0.0
-            return QuotaInfo(
-                platform = platform,
-                isAvailable = totalBalance > 0,
-                isConfigured = true,
-                totalBalance = String.format("%.2f", totalBalance),
-                currency = "CNY"
-            )
-        } else {
-            return QuotaInfo.error(platform, "HTTP ${response.code()}")
-        }
+        if (!response.isSuccessful) return QuotaInfo.error(platform, "HTTP ${response.code()}")
+        val data = response.body()?.data
+        val total = data?.availableBalance ?: 0.0
+        return QuotaInfo(
+            platform = platform,
+            isAvailable = total > 0,
+            isConfigured = true,
+            totalBalance = String.format("%.2f", total),
+            currency = "CNY"
+        )
     }
 
-    // ===== GLM (智谱) — 使用 tokenAccounts 接口 =====
+    // ===== GLM =====
 
     private suspend fun fetchGlmTokenAccounts(authHeader: String, platform: PlatformType): QuotaInfo {
         val response = glmApi.getTokenAccounts(authHeader)
-        if (response.isSuccessful) {
-            val body = response.body()
-            if (body == null) {
-                return QuotaInfo.error(platform, "响应为空")
-            }
+        if (!response.isSuccessful) return QuotaInfo.error(platform, "HTTP ${response.code()}")
+        val body = response.body() ?: return QuotaInfo.error(platform, "响应为空")
+        val rows = body.rows ?: emptyList()
 
-            val rows = body.rows ?: emptyList()
-
-            // 汇总所有资源包的 Token 余额
-            var totalRemaining = 0.0
-            var totalAmount = 0.0
-            for (row in rows) {
-                totalRemaining += row.tokenBalance ?: 0.0
-                totalAmount += row.totalAmount ?: 0.0
-            }
-
-            // 计算已使用量 = 总量 - 剩余
-            val totalUsed = (totalAmount - totalRemaining).coerceAtLeast(0.0)
-
-            return if (rows.isEmpty()) {
-                QuotaInfo(
-                    platform = platform,
-                    isAvailable = false,
-                    isConfigured = true,
-                    totalBalance = "0",
-                    monthlyUsage = "0",
-                    monthlyLimit = "0",
-                    currency = "Tokens",
-                    errorMessage = "无可用资源包"
-                )
-            } else {
-                QuotaInfo(
-                    platform = platform,
-                    isAvailable = totalRemaining > 0,
-                    isConfigured = true,
-                    totalBalance = formatTokenCount(totalRemaining.toLong()),   // 剩余Tokens
-                    monthlyUsage = formatTokenCount(totalUsed.toLong()),          // 已使用Tokens
-                    monthlyLimit = formatTokenCount(totalAmount.toLong()),        // 总Token量
-                    currency = "Tokens"
-                )
-            }
-        } else {
-            return QuotaInfo.error(platform, "HTTP ${response.code()}")
-        }
-    }
-
-    // ===== SiliconFlow =====
-
-    private suspend fun fetchSiliconFlowInfo(authHeader: String, platform: PlatformType): QuotaInfo {
-        val response = siliconFlowApi.getUserInfo(authHeader)
-        if (response.isSuccessful) {
-            val body = response.body()
-            val data = body?.data
-            val isAvailable = (body?.status == true) &&
-                (data?.totalBalance?.toDoubleOrNull()?.let { it > 0 } ?: false)
-
-            // 尝试获取 billing/usage 数据作为本月用量
-            var monthlyUsage = "0.00"
-            try {
-                val billingResp = siliconFlowApi.getBillingUsage(authHeader)
-                if (billingResp.isSuccessful) {
-                    val billing = billingResp.body()?.data
-                    val monthCost = billing?.currentMonthCost
-                    if (monthCost != null) {
-                        monthlyUsage = monthCost
-                    }
-                }
-            } catch (_: Exception) {
-                // billing 端点可能不可用，回退到本地追踪
-            }
-
-            return QuotaInfo(
-                platform = platform,
-                isAvailable = isAvailable,
-                isConfigured = true,
-                totalBalance = data?.totalBalance ?: "0.00",
-                monthlyUsage = monthlyUsage,
-                currency = "CNY"
+        var totalRemaining = 0.0
+        var totalAmount = 0.0
+        val modelUsages = rows.mapNotNull { row ->
+            val remain = row.tokenBalance ?: return@mapNotNull null
+            val amount = row.totalAmount ?: return@mapNotNull null
+            totalRemaining += remain
+            totalAmount += amount
+            val used = (amount - remain).coerceAtLeast(0.0)
+            ModelUsage(
+                modelName = row.resourcePackageName?.take(30) ?: row.tokenNo ?: "未知",
+                totalTokens = used.toLong(),
+                cost = "${remain.toLong()} / ${amount.toLong()}"
             )
-        } else {
-            return QuotaInfo.error(platform, "HTTP ${response.code()}")
         }
+
+        if (rows.isEmpty()) {
+            return QuotaInfo(platform, false, true, "0", "0", "0", "Tokens",
+                errorMessage = "无可用资源包")
+        }
+
+        val totalUsed = (totalAmount - totalRemaining).coerceAtLeast(0.0)
+        return QuotaInfo(
+            platform = platform,
+            isAvailable = totalRemaining > 0,
+            isConfigured = true,
+            totalBalance = formatTokenCount(totalRemaining.toLong()),
+            monthlyUsage = formatTokenCount(totalUsed.toLong()),
+            monthlyLimit = formatTokenCount(totalAmount.toLong()),
+            currency = "Tokens",
+            modelUsages = modelUsages
+        )
     }
 
-    private fun formatTokenCount(count: Long): String {
-        return when {
-            count >= 1_000_000_000 -> String.format("%.1fB", count / 1_000_000_000.0)
-            count >= 1_000_000 -> String.format("%.1fM", count / 1_000_000.0)
-            count >= 1_000 -> String.format("%.1fK", count / 1_000.0)
-            else -> count.toString()
-        }
+    // ===== SiliconFlow：余额 + billing usage =====
+
+    private suspend fun fetchSiliconFlow(authHeader: String, platform: PlatformType): QuotaInfo {
+        val resp = siliconFlowApi.getUserInfo(authHeader)
+        if (!resp.isSuccessful) return QuotaInfo.error(platform, "HTTP ${resp.code()}")
+        val data = resp.body()?.data
+        val isAvail = (resp.body()?.status == true) &&
+            (data?.totalBalance?.toDoubleOrNull()?.let { it > 0 } ?: false)
+
+        var monthlyCost = "0.00"
+        var modelUsages = emptyList<ModelUsage>()
+        try {
+            val billResp = siliconFlowApi.getBillingUsage(authHeader)
+            if (billResp.isSuccessful) {
+                val billData = billResp.body()?.data
+                if (billData?.currentMonthCost != null) monthlyCost = billData.currentMonthCost
+                if (billData?.currentMonthTokens != null) {
+                    modelUsages = listOf(
+                        ModelUsage(
+                            modelName = "所有模型合计",
+                            totalTokens = billData.currentMonthTokens,
+                            cost = monthlyCost
+                        )
+                    )
+                }
+            }
+        } catch (_: Exception) { /* 回退 */ }
+
+        return QuotaInfo(
+            platform = platform,
+            isAvailable = isAvail,
+            isConfigured = true,
+            totalBalance = data?.totalBalance ?: "0.00",
+            monthlyUsage = monthlyCost,
+            currency = "CNY",
+            modelUsages = modelUsages
+        )
+    }
+
+    private fun formatTokenCount(count: Long): String = when {
+        count >= 1_000_000_000 -> String.format("%.1fB", count / 1_000_000_000.0)
+        count >= 1_000_000 -> String.format("%.1fM", count / 1_000_000.0)
+        count >= 1_000 -> String.format("%.1fK", count / 1_000.0)
+        else -> count.toString()
     }
 }

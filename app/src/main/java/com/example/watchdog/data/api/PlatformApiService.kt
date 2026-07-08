@@ -3,12 +3,20 @@ package com.example.watchdog.data.api
 import retrofit2.Response
 import retrofit2.http.GET
 import retrofit2.http.Header
+import retrofit2.http.Query
 
 interface DeepSeekApi {
     @GET("/user/balance")
     suspend fun getBalance(
         @Header("Authorization") authorization: String
     ): Response<DeepSeekBalanceResponse>
+
+    @GET("/v1/usage")
+    suspend fun getUsage(
+        @Header("Authorization") authorization: String,
+        @Query("start_date") startDate: String,
+        @Query("end_date") endDate: String
+    ): Response<DeepSeekUsageResponse>
 }
 
 interface KimiApi {

@@ -1,19 +1,36 @@
 package com.example.watchdog.data.model
 
 /**
+ * 按模型细分的用量数据
+ */
+data class ModelUsage(
+    val modelName: String,
+    val requestCount: Long = 0,
+    val totalTokens: Long = 0,
+    val inputTokens: Long = 0,
+    val outputTokens: Long = 0,
+    val cost: String = "0.00"
+)
+
+/**
  * 统一的平台额度数据模型
  */
 data class QuotaInfo(
     val platform: PlatformType,
     val isAvailable: Boolean,
-    val isConfigured: Boolean,           // 是否已配置API Key
-    val totalBalance: String = "0.00",   // 总余额（金额类平台：CNY；GLM：Token限额）
-    val monthlyUsage: String = "0",      // 本月已使用量
-    val monthlyLimit: String = "0",      // 本月总量限制
+    val isConfigured: Boolean,
+    val totalBalance: String = "0.00",
+    val monthlyUsage: String = "0",
+    val monthlyLimit: String = "0",
     val currency: String = "CNY",
     val errorMessage: String? = null,
+    val modelUsages: List<ModelUsage> = emptyList(),  // 按模型用量明细
     val lastUpdated: Long = System.currentTimeMillis()
 ) {
+    val hasModelUsage: Boolean get() = modelUsages.isNotEmpty()
+    val totalRequestCount: Long get() = modelUsages.sumOf { it.requestCount }
+    val totalTokensUsed: Long get() = modelUsages.sumOf { it.totalTokens }
+
     companion object {
         fun notConfigured(platform: PlatformType): QuotaInfo {
             return QuotaInfo(
@@ -34,9 +51,6 @@ data class QuotaInfo(
     }
 }
 
-/**
- * 平台查询状态
- */
 sealed class QuotaState {
     data object Loading : QuotaState()
     data class Success(val quotas: List<QuotaInfo>) : QuotaState()
