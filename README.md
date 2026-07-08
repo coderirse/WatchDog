@@ -5,7 +5,7 @@
 ## 功能
 
 - 📊 **一目了然的仪表盘** — 四大AI平台额度状态实时显示
-- 🔄 **下拉刷新 + 自动刷新** — 每5分钟自动更新，也可手动下拉
+- 🔄 **下拉刷新 + 自动刷新** — 支持手动下拉，自动刷新间隔可配置
 - 🔑 **API Key管理** — 各平台独立配置，安全保存在本地
 - 📈 **本月消耗追踪** — 记录月初余额，计算月度API花费
 - 🎨 **Material 3设计** — 品牌色区分平台
@@ -26,6 +26,7 @@
 - **语言**: Kotlin
 - **UI**: Jetpack Compose + Material 3
 - **网络**: Retrofit 2 + OkHttp
+- **依赖注入**: 手动 `AppContainer`
 - **图片**: Coil (LobeHub AI Icons CDN)
 - **存储**: SharedPreferences
 - **最低版本**: Android 7.0 (API 24)
@@ -40,7 +41,8 @@
    - Kimi: [获取API Key](https://platform.moonshot.cn)
    - 智谱GLM: [获取API Key](https://open.bigmodel.cn)
    - 硅基流动: [获取API Key](https://siliconflow.cn)
-4. 返回首页，下拉刷新查看额度
+4. 在设置页按需调整自动刷新间隔
+5. 返回首页，下拉刷新查看额度
 
 ## 构建
 

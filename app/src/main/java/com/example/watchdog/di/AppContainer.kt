@@ -1,6 +1,7 @@
 package com.example.watchdog.di
 
 import android.content.Context
+import com.example.watchdog.BuildConfig
 import com.example.watchdog.data.api.DeepSeekApi
 import com.example.watchdog.data.api.GlmApi
 import com.example.watchdog.data.api.KimiApi
@@ -19,12 +20,17 @@ import java.util.concurrent.TimeUnit
 class AppContainer(context: Context) {
 
     // OkHttp
+    private val loggingInterceptor = HttpLoggingInterceptor().apply {
+        redactHeader("Authorization")
+        level = if (BuildConfig.DEBUG) {
+            HttpLoggingInterceptor.Level.BASIC
+        } else {
+            HttpLoggingInterceptor.Level.NONE
+        }
+    }
+
     private val okHttpClient: OkHttpClient = OkHttpClient.Builder()
-        .addInterceptor(
-            HttpLoggingInterceptor().apply {
-                level = HttpLoggingInterceptor.Level.BODY
-            }
-        )
+        .addInterceptor(loggingInterceptor)
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(15, TimeUnit.SECONDS)
         .writeTimeout(15, TimeUnit.SECONDS)

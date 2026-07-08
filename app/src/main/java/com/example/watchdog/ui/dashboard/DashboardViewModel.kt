@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.watchdog.WatchDogApplication
+import com.example.watchdog.data.local.SettingsStore
 import com.example.watchdog.data.model.PlatformType
 import com.example.watchdog.data.model.QuotaState
 import com.example.watchdog.data.repository.QuotaRepository
@@ -15,7 +16,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
 class DashboardViewModel(
-    private val quotaRepository: QuotaRepository
+    private val quotaRepository: QuotaRepository,
+    private val settingsStore: SettingsStore
 ) : ViewModel() {
 
     private val _quotaState = MutableStateFlow<QuotaState>(QuotaState.Loading)
@@ -23,6 +25,9 @@ class DashboardViewModel(
 
     private val _isRefreshing = MutableStateFlow(false)
     val isRefreshing: StateFlow<Boolean> = _isRefreshing.asStateFlow()
+
+    private val _autoRefreshInterval = MutableStateFlow(5)
+    val autoRefreshInterval: StateFlow<Int> = _autoRefreshInterval.asStateFlow()
 
     private var autoRefreshJob: Job? = null
 
@@ -61,13 +66,21 @@ class DashboardViewModel(
         }
     }
 
-    fun startAutoRefresh(intervalMinutes: Int = 5) {
+    fun startAutoRefresh() {
         autoRefreshJob?.cancel()
         autoRefreshJob = viewModelScope.launch {
             while (true) {
+                val intervalMinutes = settingsStore.getAutoRefreshInterval().coerceAtLeast(1)
+                _autoRefreshInterval.value = intervalMinutes
                 delay(intervalMinutes * 60 * 1000L)
                 refresh()
             }
+        }
+    }
+
+    fun loadAutoRefreshInterval() {
+        viewModelScope.launch {
+            _autoRefreshInterval.value = settingsStore.getAutoRefreshInterval().coerceAtLeast(1)
         }
     }
 
@@ -85,7 +98,10 @@ class DashboardViewModel(
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T {
                 val app = WatchDogApplication.instance
-                return DashboardViewModel(app.appContainer.quotaRepository) as T
+                return DashboardViewModel(
+                    quotaRepository = app.appContainer.quotaRepository,
+                    settingsStore = app.appContainer.settingsStore
+                ) as T
             }
         }
     }

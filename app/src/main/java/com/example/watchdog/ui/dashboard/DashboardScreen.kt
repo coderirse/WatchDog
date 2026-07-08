@@ -46,10 +46,12 @@ fun DashboardScreen(
 ) {
     val quotaState by viewModel.quotaState.collectAsState()
     val isRefreshing by viewModel.isRefreshing.collectAsState()
+    val autoRefreshInterval by viewModel.autoRefreshInterval.collectAsState()
 
-    // 启动自动刷新（每5分钟）
+    // 启动自动刷新并同步当前配置
     LaunchedEffect(Unit) {
-        viewModel.startAutoRefresh(intervalMinutes = 5)
+        viewModel.loadAutoRefreshInterval()
+        viewModel.startAutoRefresh()
     }
 
     Scaffold(
@@ -110,10 +112,16 @@ fun DashboardScreen(
                     }
                 }
                 is QuotaState.Success -> {
-                    QuotaList(quotas = state.quotas)
+                    QuotaList(
+                        quotas = state.quotas,
+                        autoRefreshInterval = autoRefreshInterval
+                    )
                 }
                 is QuotaState.PartialSuccess -> {
-                    QuotaList(quotas = state.quotas)
+                    QuotaList(
+                        quotas = state.quotas,
+                        autoRefreshInterval = autoRefreshInterval
+                    )
                 }
                 is QuotaState.Error -> {
                     Box(
@@ -135,7 +143,10 @@ fun DashboardScreen(
 }
 
 @Composable
-private fun QuotaList(quotas: List<QuotaInfo>) {
+private fun QuotaList(
+    quotas: List<QuotaInfo>,
+    autoRefreshInterval: Int
+) {
     LazyColumn(
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -147,7 +158,7 @@ private fun QuotaList(quotas: List<QuotaInfo>) {
         item {
             Spacer(modifier = Modifier.height(8.dp))
             Text(
-                text = "下拉刷新获取最新数据 · 自动刷新：每5分钟",
+                text = "下拉刷新获取最新数据 · 自动刷新：每${autoRefreshInterval}分钟",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.outline,
                 textAlign = TextAlign.Center,
