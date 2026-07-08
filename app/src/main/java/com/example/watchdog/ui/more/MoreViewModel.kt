@@ -1,9 +1,9 @@
 package com.example.watchdog.ui.more
 
-import androidx.lifecycle.ViewModel
+import android.app.Application
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
-import com.example.watchdog.data.model.PlatformType
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -15,16 +15,23 @@ import java.net.HttpURLConnection
 import java.net.URL
 
 data class MoreUiState(
-    val currentVersion: String = "1.2.0",
+    val currentVersion: String = "",
     val latestVersion: String? = null,
     val hasUpdate: Boolean = false,
     val isChecking: Boolean = false,
-    val checkResult: String = "" // 空=未检查, 其他=提示文字
+    val checkResult: String = ""
 )
 
-class MoreViewModel : ViewModel() {
+class MoreViewModel(application: Application) : AndroidViewModel(application) {
 
-    private val _uiState = MutableStateFlow(MoreUiState())
+    private val appVersion: String = run {
+        try {
+            val pkgInfo = application.packageManager.getPackageInfo(application.packageName, 0)
+            pkgInfo.versionName ?: "1.0"
+        } catch (_: Exception) { "1.0" }
+    }
+
+    private val _uiState = MutableStateFlow(MoreUiState(currentVersion = appVersion))
     val uiState: StateFlow<MoreUiState> = _uiState.asStateFlow()
 
     fun checkForUpdate() {
@@ -33,7 +40,7 @@ class MoreViewModel : ViewModel() {
             _uiState.value = _uiState.value.copy(isChecking = true, checkResult = "正在检查...")
             try {
                 val latest = fetchLatestVersion()
-                val current = _uiState.value.currentVersion
+                val current = appVersion
                 val hasUpdate = isNewer(latest, current)
                 _uiState.value = _uiState.value.copy(
                     latestVersion = latest,
@@ -75,9 +82,13 @@ class MoreViewModel : ViewModel() {
     }
 
     companion object {
-        val Factory: ViewModelProvider.Factory = object : ViewModelProvider.Factory {
-            @Suppress("UNCHECKED_CAST")
-            override fun <T : ViewModel> create(modelClass: Class<T>): T = MoreViewModel() as T
+        fun factory(application: Application): ViewModelProvider.Factory {
+            return object : ViewModelProvider.Factory {
+                @Suppress("UNCHECKED_CAST")
+                override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T {
+                    return MoreViewModel(application) as T
+                }
+            }
         }
     }
 }

@@ -1,5 +1,6 @@
 package com.example.watchdog.ui.more
 
+import android.app.Application
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.foundation.clickable
@@ -36,13 +37,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MoreScreen(
-    viewModel: MoreViewModel = viewModel(factory = MoreViewModel.Factory)
+    viewModel: MoreViewModel = viewModel(factory = MoreViewModel.factory(LocalContext.current.applicationContext as Application))
 ) {
     val state by viewModel.uiState.collectAsState()
     val context = LocalContext.current
@@ -169,10 +171,14 @@ fun MoreScreen(
             }
 
             // === GitHub 仓库链接 ===
-            Card(modifier = Modifier.fillMaxWidth()) {
+            Card(
+                modifier = Modifier.fillMaxWidth().clickable {
+                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/coderirse/WatchDog"))
+                    context.startActivity(intent)
+                }
+            ) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        // GitHub Octocat logo from LobeHub CDN
                         coil.compose.AsyncImage(
                             model = "https://registry.npmmirror.com/@lobehub/icons-static-png/latest/files/dark/github.png",
                             contentDescription = "GitHub",
@@ -187,11 +193,7 @@ fun MoreScreen(
                     Text(
                         text = "github.com/coderirse/WatchDog",
                         style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.clickable {
-                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/coderirse/WatchDog"))
-                            context.startActivity(intent)
-                        }
+                        color = MaterialTheme.colorScheme.primary
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
@@ -208,7 +210,7 @@ fun MoreScreen(
                 text = "© 2026 caeamer. All rights reserved.",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.outline.copy(alpha = 0.6f),
-                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                textAlign = TextAlign.Center,
                 modifier = Modifier.fillMaxWidth().padding(bottom = 32.dp)
             )
         }
