@@ -50,8 +50,8 @@ class QuotaRepository(
                 PlatformType.SILICONFLOW -> fetchSiliconFlow(authHeader, platform)
             }
 
-            // DeepSeek/Kimi 无可用量API，用本地月初余额追踪
-            if ((platform == PlatformType.DEEPSEEK || platform == PlatformType.KIMI)
+            // DeepSeek/Kimi/SiliconFlow 无可用量API，用本地月初余额追踪
+            if (platform != PlatformType.GLM
                 && rawQuota.isAvailable && rawQuota.errorMessage == null
             ) {
                 val balance = rawQuota.totalBalance.toDoubleOrNull()
@@ -174,42 +174,19 @@ class QuotaRepository(
         )
     }
 
-    // ===== SiliconFlow：余额 + billing usage =====
+    // ===== SiliconFlow：仅余额（billing 接口无官方文档，数据不准） =====
 
     private suspend fun fetchSiliconFlow(authHeader: String, platform: PlatformType): QuotaInfo {
         val resp = siliconFlowApi.getUserInfo(authHeader)
         if (!resp.isSuccessful) return QuotaInfo.error(platform, "HTTP ${resp.code()}")
         val data = resp.body()?.data
-        val isAvail = (resp.body()?.status == true) &&
-            (data?.totalBalance?.toDoubleOrNull()?.let { it > 0 } ?: false)
-
-        var monthlyCost = "0.00"
-        var modelUsages = emptyList<ModelUsage>()
-        try {
-            val billResp = siliconFlowApi.getBillingUsage(authHeader)
-            if (billResp.isSuccessful) {
-                val billData = billResp.body()?.data
-                if (billData?.currentMonthCost != null) monthlyCost = billData.currentMonthCost
-                if (billData?.currentMonthTokens != null) {
-                    modelUsages = listOf(
-                        ModelUsage(
-                            modelName = "所有模型合计",
-                            totalTokens = billData.currentMonthTokens,
-                            cost = monthlyCost
-                        )
-                    )
-                }
-            }
-        } catch (_: Exception) { /* 回退 */ }
-
+        val totalBalance = data?.totalBalance?.toDoubleOrNull() ?: 0.0
         return QuotaInfo(
             platform = platform,
-            isAvailable = isAvail,
+            isAvailable = resp.body()?.status == true && totalBalance > 0,
             isConfigured = true,
-            totalBalance = data?.totalBalance ?: "0.00",
-            monthlyUsage = monthlyCost,
-            currency = "CNY",
-            modelUsages = modelUsages
+            totalBalance = String.format("%.2f", totalBalance),
+            currency = "CNY"
         )
     }
 

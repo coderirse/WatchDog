@@ -225,7 +225,7 @@ private fun ModelUsageEmptyHint(platform: PlatformType) {
         PlatformType.DEEPSEEK -> "DeepSeek 未开放用量查询接口，无法获取按模型调用明细。\n如需查看，请登录 platform.deepseek.com → Usage 页面。"
         PlatformType.KIMI -> "Kimi 未开放用量查询接口，无法获取按模型调用明细。\n如需查看，请登录 platform.moonshot.cn → 费用明细。"
         PlatformType.GLM -> "GLM 资源包数据暂未解析到模型明细。\n如需查看，请登录 open.bigmodel.cn → 费用中心。"
-        PlatformType.SILICONFLOW -> "硅基流动 billing 接口仅返回月度总额，暂无按模型拆分。\n如需查看，请登录 siliconflow.cn → 费用账单。"
+        PlatformType.SILICONFLOW -> "硅基流动未开放用量查询接口，无法获取按模型调用明细。\n如需查看，请登录 siliconflow.cn → 费用账单。"
     }
     Text(
         text = hint,

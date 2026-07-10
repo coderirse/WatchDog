@@ -11,8 +11,8 @@ android {
         applicationId = "com.example.watchdog"
         minSdk = 24
         targetSdk = 37
-        versionCode = 5
-        versionName = "1.0.3"
+        versionCode = 6
+        versionName = "1.0.4"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
