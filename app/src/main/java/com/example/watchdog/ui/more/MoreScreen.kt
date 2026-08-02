@@ -33,6 +33,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -43,11 +44,11 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun MoreScreen(
-    viewModel: MoreViewModel = viewModel(factory = MoreViewModel.factory(LocalContext.current.applicationContext as Application))
-) {
-    val state by viewModel.uiState.collectAsState()
+fun MoreScreen() {
     val context = LocalContext.current
+    val viewModelFactory = remember { MoreViewModel.factory(context.applicationContext as Application) }
+    val viewModel: MoreViewModel = viewModel(factory = viewModelFactory)
+    val state by viewModel.uiState.collectAsState()
 
     Scaffold(
         topBar = {

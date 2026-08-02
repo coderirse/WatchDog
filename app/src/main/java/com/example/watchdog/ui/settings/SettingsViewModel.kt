@@ -3,7 +3,7 @@ package com.example.watchdog.ui.settings
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
-import com.example.watchdog.WatchDogApplication
+import com.example.watchdog.di.AppContainer
 import com.example.watchdog.data.local.SettingsStore
 import com.example.watchdog.data.model.PlatformType
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -96,11 +96,10 @@ class SettingsViewModel(
     }
 
     companion object {
-        val Factory: ViewModelProvider.Factory = object : ViewModelProvider.Factory {
+        fun factory(container: AppContainer): ViewModelProvider.Factory = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T {
-                val app = WatchDogApplication.instance
-                return SettingsViewModel(app.appContainer.settingsStore) as T
+                return SettingsViewModel(container.settingsStore) as T
             }
         }
     }

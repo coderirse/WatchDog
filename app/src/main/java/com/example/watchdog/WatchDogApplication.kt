@@ -10,12 +10,6 @@ class WatchDogApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
-        instance = this
         appContainer = AppContainer(this)
-    }
-
-    companion object {
-        lateinit var instance: WatchDogApplication
-            private set
     }
 }

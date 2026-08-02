@@ -44,6 +44,7 @@ fun PlatformQuotaCard(quotaInfo: QuotaInfo, modifier: Modifier = Modifier) {
         colors = CardDefaults.cardColors(
             containerColor = when {
                 !quotaInfo.isConfigured -> MaterialTheme.colorScheme.surfaceVariant
+                quotaInfo.isStale -> MaterialTheme.colorScheme.surfaceVariant
                 quotaInfo.isAvailable -> MaterialTheme.colorScheme.surface
                 else -> MaterialTheme.colorScheme.errorContainer
             }
@@ -72,6 +73,7 @@ private fun PlatformHeader(quotaInfo: QuotaInfo) {
         }
         val (s, c) = when {
             !quotaInfo.isConfigured -> "未配置" to MaterialTheme.colorScheme.outline
+            quotaInfo.isStale -> "缓存" to MaterialTheme.colorScheme.outline
             quotaInfo.errorMessage != null -> "异常" to MaterialTheme.colorScheme.error
             quotaInfo.isAvailable -> "正常" to quotaInfo.platform.brandColor
             else -> "耗尽" to MaterialTheme.colorScheme.error
@@ -151,7 +153,12 @@ private fun QuotaContent(q: QuotaInfo) {
                         Text("模型", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline, modifier = Modifier.weight(2f))
                         Text("调用", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline, modifier = Modifier.weight(1f))
                         Text("Tokens", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline, modifier = Modifier.weight(1.2f))
-                        Text("费用", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline, modifier = Modifier.weight(1f))
+                        Text(
+                            if (q.platform == PlatformType.GLM) "剩余/总量" else "费用",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.outline,
+                            modifier = Modifier.weight(1f)
+                        )
                     }
                     Spacer(modifier = Modifier.height(4.dp))
                     q.modelUsages.forEach { mu -> ModelUsageRow(mu) }

@@ -4,24 +4,23 @@ import com.example.watchdog.data.api.DeepSeekApi
 import com.example.watchdog.data.api.GlmApi
 import com.example.watchdog.data.api.KimiApi
 import com.example.watchdog.data.api.SiliconFlowApi
+import com.example.watchdog.data.local.QuotaCacheStore
 import com.example.watchdog.data.local.SettingsStore
 import com.example.watchdog.data.model.ModelUsage
 import com.example.watchdog.data.model.PlatformType
 import com.example.watchdog.data.model.QuotaInfo
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
-import java.time.LocalDate
-import java.time.format.DateTimeFormatter
+import java.util.Locale
 
 class QuotaRepository(
     private val settingsStore: SettingsStore,
+    private val cacheStore: QuotaCacheStore,
     private val deepSeekApi: DeepSeekApi,
     private val kimiApi: KimiApi,
     private val glmApi: GlmApi,
     private val siliconFlowApi: SiliconFlowApi
 ) {
-    private val dateFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd")
-
     suspend fun fetchAllQuotas(): List<QuotaInfo> = coroutineScope {
         val configuredPlatforms = settingsStore.getConfiguredPlatforms()
         val allPlatforms = PlatformType.entries
@@ -51,23 +50,41 @@ class QuotaRepository(
             }
 
             // DeepSeek/Kimi/SiliconFlow 无可用量API，用本地月初余额追踪
-            if (platform != PlatformType.GLM
+            val result = if (platform != PlatformType.GLM
                 && rawQuota.isAvailable && rawQuota.errorMessage == null
             ) {
                 val balance = rawQuota.totalBalance.toDoubleOrNull()
                 if (balance != null) {
                     val usage = settingsStore.recordBalanceAndGetMonthlyUsage(platform, balance)
                     rawQuota.copy(
-                        monthlyUsage = if (usage < 0.01) "0.00" else String.format("%.2f", usage)
+                        monthlyUsage = if (usage < 0.01) "0.00" else String.format(Locale.US, "%.2f", usage)
                     )
                 } else rawQuota
             } else rawQuota
+
+            // 成功后写入缓存，供断网时回退展示
+            if (result.errorMessage == null) {
+                runCatching { cacheStore.put(platform, result) }
+            }
+            result
         } catch (e: Exception) {
-            QuotaInfo.error(platform, e.localizedMessage ?: "未知错误")
+            // 网络/解析异常时优先展示上次缓存的数据，并标记为缓存数据
+            val cached = runCatching { cacheStore.get(platform) }.getOrNull()
+            if (cached != null) {
+                cached.copy(isConfigured = true, errorMessage = null, isStale = true)
+            } else {
+                val message = when (e) {
+                    is java.net.UnknownHostException -> "无法连接服务器，请检查网络"
+                    is java.net.SocketTimeoutException -> "请求超时，请稍后重试"
+                    is java.io.IOException -> "网络请求失败"
+                    else -> e.localizedMessage ?: "未知错误"
+                }
+                QuotaInfo.error(platform, message)
+            }
         }
     }
 
-    // ===== DeepSeek：余额 + 尝试获取用量 =====
+    // ===== DeepSeek：余额（官方未提供用量查询接口，月度用量由本地余额快照推算） =====
 
     private suspend fun fetchDeepSeek(authHeader: String, platform: PlatformType): QuotaInfo {
         val response = deepSeekApi.getBalance(authHeader)
@@ -76,44 +93,12 @@ class QuotaRepository(
         val body = response.body()
         val balance = body?.balanceInfos?.firstOrNull()
 
-        // 尝试获取本月按模型用量
-        var modelUsages = emptyList<ModelUsage>()
-        var monthlyTokens = 0L
-        try {
-            val now = LocalDate.now()
-            val start = now.withDayOfMonth(1).format(dateFormatter)
-            val end = now.format(dateFormatter)
-            val usageResp = deepSeekApi.getUsage(authHeader, start, end)
-            if (usageResp.isSuccessful) {
-                val usageData = usageResp.body()?.data
-                if (usageData != null) {
-                    modelUsages = usageData.mapNotNull { item ->
-                        val model = item.model ?: return@mapNotNull null
-                        val tokens = item.totalTokens ?: 0L
-                        monthlyTokens += tokens
-                        ModelUsage(
-                            modelName = model,
-                            requestCount = item.requestCount ?: 0,
-                            totalTokens = tokens,
-                            inputTokens = item.inputTokens ?: 0,
-                            outputTokens = item.outputTokens ?: 0,
-                            cost = item.cost ?: "0.00"
-                        )
-                    }
-                }
-            }
-        } catch (_: Exception) {
-            // /v1/usage 可能不存在，静默回退
-        }
-
         return QuotaInfo(
             platform = platform,
             isAvailable = body?.isAvailable ?: false,
             isConfigured = true,
             totalBalance = balance?.totalBalance ?: "0.00",
-            monthlyUsage = formatTokenCount(monthlyTokens),
-            currency = balance?.currency ?: "CNY",
-            modelUsages = modelUsages
+            currency = balance?.currency ?: "CNY"
         )
     }
 
@@ -126,9 +111,9 @@ class QuotaRepository(
         val total = data?.availableBalance ?: 0.0
         return QuotaInfo(
             platform = platform,
-            isAvailable = total > 0,
+            isAvailable = data != null,
             isConfigured = true,
-            totalBalance = String.format("%.2f", total),
+            totalBalance = String.format(Locale.US, "%.2f", total),
             currency = "CNY"
         )
     }
@@ -157,8 +142,15 @@ class QuotaRepository(
         }
 
         if (rows.isEmpty()) {
-            return QuotaInfo(platform, false, true, "0", "0", "0", "Tokens",
-                errorMessage = "无可用资源包")
+            return QuotaInfo(
+                platform = platform,
+                isAvailable = false,
+                isConfigured = true,
+                totalBalance = "0",
+                monthlyUsage = "0",
+                monthlyLimit = "0",
+                currency = "Tokens"
+            )
         }
 
         val totalUsed = (totalAmount - totalRemaining).coerceAtLeast(0.0)
@@ -183,17 +175,17 @@ class QuotaRepository(
         val totalBalance = data?.totalBalance?.toDoubleOrNull() ?: 0.0
         return QuotaInfo(
             platform = platform,
-            isAvailable = resp.body()?.status == true && totalBalance > 0,
+            isAvailable = resp.body()?.status == true,
             isConfigured = true,
-            totalBalance = String.format("%.2f", totalBalance),
+            totalBalance = String.format(Locale.US, "%.2f", totalBalance),
             currency = "CNY"
         )
     }
 
     private fun formatTokenCount(count: Long): String = when {
-        count >= 1_000_000_000 -> String.format("%.1fB", count / 1_000_000_000.0)
-        count >= 1_000_000 -> String.format("%.1fM", count / 1_000_000.0)
-        count >= 1_000 -> String.format("%.1fK", count / 1_000.0)
+        count >= 1_000_000_000 -> String.format(Locale.US, "%.1fB", count / 1_000_000_000.0)
+        count >= 1_000_000 -> String.format(Locale.US, "%.1fM", count / 1_000_000.0)
+        count >= 1_000 -> String.format(Locale.US, "%.1fK", count / 1_000.0)
         else -> count.toString()
     }
 }

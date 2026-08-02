@@ -6,7 +6,9 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
+import com.example.watchdog.di.LocalAppContainer
 import com.example.watchdog.ui.navigation.WatchDogNavGraph
 import com.example.watchdog.ui.theme.WatchDogTheme
 
@@ -15,9 +17,12 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
-            WatchDogTheme {
-                Surface(modifier = Modifier.fillMaxSize()) {
-                    WatchDogNavGraph()
+            val appContainer = (application as WatchDogApplication).appContainer
+            CompositionLocalProvider(LocalAppContainer provides appContainer) {
+                WatchDogTheme {
+                    Surface(modifier = Modifier.fillMaxSize()) {
+                        WatchDogNavGraph()
+                    }
                 }
             }
         }

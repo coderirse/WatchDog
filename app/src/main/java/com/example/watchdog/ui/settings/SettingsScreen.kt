@@ -41,15 +41,17 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.watchdog.di.LocalAppContainer
 import com.example.watchdog.data.model.PlatformType
 import com.example.watchdog.ui.components.ApiKeyDialog
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
-    onBack: () -> Unit,
-    viewModel: SettingsViewModel = viewModel(factory = SettingsViewModel.Factory)
+    onBack: () -> Unit
 ) {
+    val appContainer = LocalAppContainer.current
+    val viewModel: SettingsViewModel = viewModel(factory = SettingsViewModel.factory(appContainer))
     val uiState by viewModel.uiState.collectAsState()
 
     Scaffold(

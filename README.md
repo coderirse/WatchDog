@@ -17,9 +17,9 @@
 | **DeepSeek** | `/user/balance` | 总余额 + 本地月度消耗追踪 |
 | **Kimi (Moonshot)** | `/v1/users/me/balance` | 总余额 + 本地月度消耗追踪 |
 | **智谱GLM** | `/api/biz/tokenAccounts/list/my` | 资源包Token余额 + 累计已用 |
-| **硅基流动** | `/v1/user/info` + `/v1/dashboard/billing/usage` | 总余额 + 官方月度用量 |
+| **硅基流动** | `/v1/user/info` | 总余额 + 本地月度消耗追踪 |
 
-> ⚠️  说明：DeepSeek 和 Kimi 的API不提供月度用量查询接口，本App通过记录月初余额快照来推算月度消耗量。初始使用时会显示 0，随着API调用消耗，数据会逐渐准确。GLM 和 硅基流动 使用官方接口获取用量数据。
+> ⚠️  说明：DeepSeek、Kimi 和 硅基流动 的API不提供稳定的月度用量查询接口，本App通过记录月初余额快照来推算月度消耗量。初始使用时会显示 0，随着API调用消耗，数据会逐渐准确。GLM 使用官方接口获取用量数据。
 
 ## 技术栈
 
@@ -30,7 +30,7 @@
 - **图片**: Coil (LobeHub AI Icons CDN)
 - **存储**: SharedPreferences
 - **最低版本**: Android 7.0 (API 24)
-- **编译SDK**: Android 15 (API 37)
+- **编译SDK**: API 37
 
 ## 使用方式
 

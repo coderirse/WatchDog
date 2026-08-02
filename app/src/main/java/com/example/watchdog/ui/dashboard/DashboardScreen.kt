@@ -4,16 +4,22 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
@@ -26,14 +32,18 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.watchdog.di.LocalAppContainer
 import com.example.watchdog.data.model.QuotaInfo
 import com.example.watchdog.data.model.QuotaState
 import com.example.watchdog.ui.components.PlatformQuotaCard
@@ -41,17 +51,32 @@ import com.example.watchdog.ui.components.PlatformQuotaCard
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DashboardScreen(
-    onNavigateToSettings: () -> Unit,
-    viewModel: DashboardViewModel = viewModel(factory = DashboardViewModel.Factory)
+    onNavigateToSettings: () -> Unit
 ) {
+    val appContainer = LocalAppContainer.current
+    val viewModel: DashboardViewModel = viewModel(factory = DashboardViewModel.factory(appContainer))
     val quotaState by viewModel.quotaState.collectAsState()
     val isRefreshing by viewModel.isRefreshing.collectAsState()
+    val isOffline by viewModel.isOffline.collectAsState()
     val autoRefreshInterval by viewModel.autoRefreshInterval.collectAsState()
+    val lifecycleOwner = LocalLifecycleOwner.current
 
-    // 启动自动刷新并同步当前配置
-    LaunchedEffect(Unit) {
+    // 仅当仪表盘可见且应用处于前台时自动刷新：离开页面或退到后台即停止
+    DisposableEffect(lifecycleOwner) {
         viewModel.loadAutoRefreshInterval()
         viewModel.startAutoRefresh()
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_RESUME -> viewModel.startAutoRefresh()
+                Lifecycle.Event.ON_PAUSE -> viewModel.stopAutoRefresh()
+                else -> Unit
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            viewModel.stopAutoRefresh()
+        }
     }
 
     Scaffold(
@@ -114,13 +139,15 @@ fun DashboardScreen(
                 is QuotaState.Success -> {
                     QuotaList(
                         quotas = state.quotas,
-                        autoRefreshInterval = autoRefreshInterval
+                        autoRefreshInterval = autoRefreshInterval,
+                        showOfflineBanner = isOffline
                     )
                 }
                 is QuotaState.PartialSuccess -> {
                     QuotaList(
                         quotas = state.quotas,
-                        autoRefreshInterval = autoRefreshInterval
+                        autoRefreshInterval = autoRefreshInterval,
+                        showOfflineBanner = isOffline
                     )
                 }
                 is QuotaState.Error -> {
@@ -145,12 +172,19 @@ fun DashboardScreen(
 @Composable
 private fun QuotaList(
     quotas: List<QuotaInfo>,
-    autoRefreshInterval: Int
+    autoRefreshInterval: Int,
+    showOfflineBanner: Boolean
 ) {
     LazyColumn(
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
+        if (showOfflineBanner) {
+            item(key = "offline_banner") {
+                OfflineBanner()
+            }
+        }
+
         items(quotas, key = { it.platform.name }) { quota ->
             PlatformQuotaCard(quotaInfo = quota)
         }
@@ -165,6 +199,34 @@ private fun QuotaList(
                 modifier = Modifier.fillMaxWidth()
             )
             Spacer(modifier = Modifier.height(72.dp))
+        }
+    }
+}
+
+@Composable
+private fun OfflineBanner() {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.tertiaryContainer
+        )
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = Icons.Filled.Warning,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onTertiaryContainer,
+                modifier = Modifier.size(18.dp)
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = "网络异常，当前显示的是本地缓存数据，可能不是最新",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onTertiaryContainer
+            )
         }
     }
 }

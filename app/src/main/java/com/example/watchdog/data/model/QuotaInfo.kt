@@ -25,7 +25,8 @@ data class QuotaInfo(
     val currency: String = "CNY",
     val errorMessage: String? = null,
     val modelUsages: List<ModelUsage> = emptyList(),  // 按模型用量明细
-    val lastUpdated: Long = System.currentTimeMillis()
+    val lastUpdated: Long = System.currentTimeMillis(),
+    val isStale: Boolean = false  // true 表示该数据来自本地缓存（离线回退）
 ) {
     val hasModelUsage: Boolean get() = modelUsages.isNotEmpty()
     val totalRequestCount: Long get() = modelUsages.sumOf { it.requestCount }

@@ -6,6 +6,7 @@ import com.example.watchdog.data.api.DeepSeekApi
 import com.example.watchdog.data.api.GlmApi
 import com.example.watchdog.data.api.KimiApi
 import com.example.watchdog.data.api.SiliconFlowApi
+import com.example.watchdog.data.local.QuotaCacheStore
 import com.example.watchdog.data.local.SettingsStore
 import com.example.watchdog.data.repository.QuotaRepository
 import okhttp3.OkHttpClient
@@ -54,9 +55,13 @@ class AppContainer(context: Context) {
     // SettingsStore (需要Context)
     val settingsStore: SettingsStore = SettingsStore(context.applicationContext)
 
+    // 额度缓存（断网回退用）
+    val quotaCacheStore: QuotaCacheStore = QuotaCacheStore(context.applicationContext)
+
     // Repository
     val quotaRepository: QuotaRepository = QuotaRepository(
         settingsStore = settingsStore,
+        cacheStore = quotaCacheStore,
         deepSeekApi = deepSeekApi,
         kimiApi = kimiApi,
         glmApi = glmApi,

@@ -2,14 +2,25 @@ package com.example.watchdog.data.local
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.security.keystore.KeyGenParameterSpec
+import android.security.keystore.KeyProperties
+import android.util.Base64
 import androidx.core.content.edit
 import com.example.watchdog.data.model.PlatformType
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.nio.ByteBuffer
+import java.security.KeyStore
+import javax.crypto.Cipher
+import javax.crypto.KeyGenerator
+import javax.crypto.SecretKey
+import javax.crypto.spec.GCMParameterSpec
 
 class SettingsStore(
     private val context: Context
 ) {
+    private val keyLock = Any()
+
     private val prefs: SharedPreferences
         get() = context.applicationContext.getSharedPreferences(
             "watchdog_settings",
@@ -18,7 +29,7 @@ class SettingsStore(
 
     suspend fun saveApiKey(platform: PlatformType, apiKey: String) {
         withContext(Dispatchers.IO) {
-            prefs.edit { putString(getApiKeyKey(platform), apiKey) }
+            prefs.edit { putString(getApiKeyKey(platform), encryptApiKey(apiKey)) }
         }
     }
 
@@ -46,8 +57,8 @@ class SettingsStore(
 
     suspend fun getApiKey(platform: PlatformType): String? {
         return withContext(Dispatchers.IO) {
-            val apiKey = prefs.getString(getApiKeyKey(platform), "") ?: ""
-            apiKey.ifBlank { null }
+            val stored = prefs.getString(getApiKeyKey(platform), "") ?: ""
+            stored.ifBlank { null }?.let { decryptApiKey(it) }?.ifBlank { null }
         }
     }
 
@@ -87,6 +98,59 @@ class SettingsStore(
         }
     }
 
+    // ===== API Key 加密存储（Android Keystore AES-GCM） =====
+
+    private fun encryptApiKey(plain: String): String {
+        return try {
+            val cipher = Cipher.getInstance(TRANSFORMATION)
+            cipher.init(Cipher.ENCRYPT_MODE, getOrCreateSecretKey())
+            val iv = cipher.iv
+            val encrypted = cipher.doFinal(plain.toByteArray(Charsets.UTF_8))
+            val payload = ByteBuffer.allocate(iv.size + encrypted.size)
+                .put(iv)
+                .put(encrypted)
+                .array()
+            ENCRYPTED_PREFIX + Base64.encodeToString(payload, Base64.NO_WRAP)
+        } catch (_: Exception) {
+            // Keystore 不可用时回退明文存储，避免用户被锁在门外（极少发生）
+            plain
+        }
+    }
+
+    private fun decryptApiKey(stored: String): String? {
+        // 旧版本未加密的明文数据直接返回，下次保存时自动迁移为密文
+        if (!stored.startsWith(ENCRYPTED_PREFIX)) return stored
+        return try {
+            val raw = Base64.decode(stored.removePrefix(ENCRYPTED_PREFIX), Base64.NO_WRAP)
+            if (raw.size <= GCM_IV_LENGTH) return null
+            val iv = raw.copyOfRange(0, GCM_IV_LENGTH)
+            val ciphertext = raw.copyOfRange(GCM_IV_LENGTH, raw.size)
+            val cipher = Cipher.getInstance(TRANSFORMATION)
+            cipher.init(Cipher.DECRYPT_MODE, getOrCreateSecretKey(), GCMParameterSpec(GCM_TAG_BITS, iv))
+            String(cipher.doFinal(ciphertext), Charsets.UTF_8)
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun getOrCreateSecretKey(): SecretKey = synchronized(keyLock) {
+        val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
+        (keyStore.getEntry(KEYSTORE_ALIAS, null) as? KeyStore.SecretKeyEntry)?.let { return it.secretKey }
+
+        val generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, ANDROID_KEYSTORE)
+        generator.init(
+            KeyGenParameterSpec.Builder(
+                KEYSTORE_ALIAS,
+                KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT
+            )
+                .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+                .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+                .setKeySize(256)
+                .build()
+        )
+        generator.generateKey()
+    }
+
     // ===== 本月用量追踪 =====
 
     /**
@@ -99,7 +163,8 @@ class SettingsStore(
     ): Double {
         return withContext(Dispatchers.IO) {
             val now = java.util.Calendar.getInstance()
-            val currentMonth = now.get(java.util.Calendar.MONTH) // 0-11
+            // 用 年*12+月 作为月份标识，避免跨年时误判为同一月份
+            val currentMonth = now.get(java.util.Calendar.YEAR) * 12 + now.get(java.util.Calendar.MONTH)
             val storedMonth = prefs.getInt("${getPrefix(platform)}_month_start_month", -1)
             val startBalanceKey = "${getPrefix(platform)}_month_start_balance"
 
@@ -129,5 +194,14 @@ class SettingsStore(
             PlatformType.GLM -> "glm"
             PlatformType.SILICONFLOW -> "siliconflow"
         }
+    }
+
+    private companion object {
+        const val ANDROID_KEYSTORE = "AndroidKeyStore"
+        const val KEYSTORE_ALIAS = "watchdog_api_key"
+        const val TRANSFORMATION = "AES/GCM/NoPadding"
+        const val ENCRYPTED_PREFIX = "enc:v1:"
+        const val GCM_IV_LENGTH = 12
+        const val GCM_TAG_BITS = 128
     }
 }

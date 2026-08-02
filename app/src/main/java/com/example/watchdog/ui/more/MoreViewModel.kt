@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.example.watchdog.util.VersionUtils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -11,6 +12,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
+import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 
@@ -41,7 +43,7 @@ class MoreViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 val latest = fetchLatestVersion()
                 val current = appVersion
-                val hasUpdate = isNewer(latest, current)
+                val hasUpdate = VersionUtils.isNewer(latest, current)
                 _uiState.value = _uiState.value.copy(
                     latestVersion = latest,
                     hasUpdate = hasUpdate,
@@ -59,26 +61,24 @@ class MoreViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private suspend fun fetchLatestVersion(): String = withContext(Dispatchers.IO) {
-        val url = URL("https://api.github.com/repos/coderirse/WatchDog/releases/latest")
-        val conn = url.openConnection() as HttpURLConnection
-        conn.setRequestProperty("Accept", "application/vnd.github+json")
-        conn.connectTimeout = 10000
-        conn.readTimeout = 10000
-        val body = conn.inputStream.bufferedReader().readText()
-        val json = JSONObject(body)
-        json.getString("tag_name").removePrefix("v")
-    }
-
-    private fun isNewer(latest: String, current: String): Boolean {
-        val l = latest.split(".").map { it.toIntOrNull() ?: 0 }
-        val c = current.split(".").map { it.toIntOrNull() ?: 0 }
-        for (i in 0 until maxOf(l.size, c.size)) {
-            val lv = l.getOrElse(i) { 0 }
-            val cv = c.getOrElse(i) { 0 }
-            if (lv > cv) return true
-            if (lv < cv) return false
+        var conn: HttpURLConnection? = null
+        try {
+            conn = URL("https://api.github.com/repos/coderirse/WatchDog/releases/latest")
+                .openConnection() as HttpURLConnection
+            conn.requestMethod = "GET"
+            conn.setRequestProperty("Accept", "application/vnd.github+json")
+            conn.setRequestProperty("User-Agent", "WatchDog-Android/update-check")
+            conn.connectTimeout = 10000
+            conn.readTimeout = 10000
+            if (conn.responseCode != HttpURLConnection.HTTP_OK) {
+                throw IOException("GitHub API 返回 HTTP ${conn.responseCode}")
+            }
+            val body = conn.inputStream.bufferedReader().readText()
+            val json = JSONObject(body)
+            json.getString("tag_name").removePrefix("v")
+        } finally {
+            conn?.disconnect()
         }
-        return false
     }
 
     companion object {
