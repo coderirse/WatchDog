@@ -1,3 +1,118 @@
 <resources>
     <string name="app_name">WatchDog</string>
+
+    <!-- 主题 -->
+    <string name="theme_follow_system">跟随系统</string>
+    <string name="theme_light">浅色</string>
+    <string name="theme_dark">深色</string>
+    <string name="settings_theme_title">主题</string>
+
+    <!-- 底部导航 -->
+    <string name="nav_quota">额度</string>
+    <string name="nav_more">更多</string>
+
+    <!-- 通用 -->
+    <string name="action_refresh">刷新</string>
+    <string name="action_back">返回</string>
+    <string name="action_save">保存</string>
+    <string name="action_cancel">取消</string>
+    <string name="action_delete">删除</string>
+    <string name="action_clear">清除</string>
+
+    <!-- 仪表盘 -->
+    <string name="dashboard_offline_banner">网络异常，当前显示的是本地缓存数据，可能不是最新</string>
+    <string name="dashboard_footer">下拉刷新获取最新数据 · 自动刷新：每%1$d分钟</string>
+    <string name="dashboard_empty_title">还没有配置任何平台</string>
+    <string name="dashboard_empty_subtitle">添加 API Key 后即可开始监控各平台额度</string>
+    <string name="dashboard_empty_action">去配置</string>
+    <string name="fab_settings_content_desc">设置API Key</string>
+    <string name="hero_total_balance">总余额</string>
+    <string name="hero_subscription_excluded">订阅配额平台不计入金额汇总</string>
+    <string name="hero_platform_stats">%1$d 个平台 · %2$d 正常 %3$d 异常</string>
+    <string name="hero_last_refresh">上次刷新 %1$s</string>
+
+    <!-- 额度卡片 -->
+    <string name="status_normal">正常</string>
+    <string name="status_low">偏低</string>
+    <string name="status_depleted">耗尽</string>
+    <string name="status_not_configured">未配置</string>
+    <string name="status_error">异常</string>
+    <string name="status_cached">缓存</string>
+    <string name="status_estimate">估算</string>
+    <string name="quota_not_configured_hint">请先配置API Key以查看额度信息</string>
+    <string name="quota_query_failed">查询失败: %1$s</string>
+    <string name="quota_label_total_balance">总余额</string>
+    <string name="quota_label_remaining_token">剩余Token</string>
+    <string name="quota_label_monthly_usage">本月用量</string>
+    <string name="quota_label_available_balance">可用余额</string>
+    <string name="quota_label_total_used">累计已用</string>
+    <string name="quota_remaining_of_total">剩余: %1$s / 总量: %2$s %3$s</string>
+    <string name="quota_ark_need_initial">填写初始余额后显示估算余额</string>
+    <string name="quota_plan_label">套餐</string>
+    <string name="quota_window_default_name">配额窗口</string>
+    <string name="quota_window_used_remaining">已用 %1$s / 剩余 %2$s</string>
+    <string name="quota_reset_at">最近重置: %1$s</string>
+    <string name="quota_expires_at">最近到期: %1$s</string>
+    <string name="quota_usage_details">调用明细</string>
+    <string name="quota_usage_details_count">调用明细 (%1$d项)</string>
+    <string name="quota_usage_summary">共 %1$s次调用  %2$s Tokens</string>
+    <string name="quota_model_row_label">%1$s Tokens · %2$s次</string>
+    <string name="quota_updated_at">更新: %1$s</string>
+    <string name="usage_hint_deepseek">DeepSeek 未开放用量查询接口，无法获取按模型调用明细。\n如需查看，请登录 platform.deepseek.com → Usage 页面。</string>
+    <string name="usage_hint_kimi">Kimi 未开放用量查询接口，无法获取按模型调用明细。\n如需查看，请登录 platform.moonshot.cn → 费用明细。</string>
+    <string name="usage_hint_glm">GLM 资源包数据暂未解析到模型明细。\n如需查看，请登录 open.bigmodel.cn → 费用中心。</string>
+    <string name="usage_hint_siliconflow">硅基流动未开放用量查询接口，无法获取按模型调用明细。\n如需查看，请登录 siliconflow.cn → 费用账单。</string>
+    <string name="usage_hint_volcengine">火山方舟无余额查询接口，余额为本地估算（基于手动填写的初始余额）。\n如需准确数据，请登录火山引擎控制台 → 费用中心。</string>
+    <string name="usage_hint_kimi_code">Kimi Code 为订阅配额模式，暂无按模型调用明细。\n如需查看，请登录 kimi.com → 订阅管理。</string>
+
+    <!-- 设置 -->
+    <string name="settings_title">设置</string>
+    <string name="settings_group_platforms">平台配置</string>
+    <string name="settings_group_general">通用设置</string>
+    <string name="settings_api_key_masked">API Key: %1$s...%2$s</string>
+    <string name="settings_api_key_empty">未配置 API Key</string>
+    <string name="settings_create_key_hint">在 %1$s 创建 API Key</string>
+    <string name="settings_console_deepseek">platform.deepseek.com</string>
+    <string name="settings_console_kimi">platform.moonshot.cn</string>
+    <string name="settings_console_glm">bigmodel.cn</string>
+    <string name="settings_console_siliconflow">cloud.siliconflow.cn</string>
+    <string name="settings_console_volcengine">console.volcengine.com/ark</string>
+    <string name="settings_console_kimi_code">kimi.com</string>
+    <string name="settings_kimi_code_independent">与 Kimi 开放平台是独立产品，API Key 不通用</string>
+    <string name="settings_ark_initial_balance_title">初始余额</string>
+    <string name="settings_ark_initial_balance_value">¥ %1$s</string>
+    <string name="settings_ark_initial_balance_empty">未填写</string>
+    <string name="settings_ark_initial_balance_desc">方舟无法通过 API Key 查询余额，填写初始余额后按本月用量估算</string>
+    <string name="settings_ark_edit_balance">填写</string>
+    <string name="settings_refresh_interval">自动刷新间隔</string>
+    <string name="settings_interval_minutes">%1$d分钟</string>
+    <string name="settings_interval_selected">● %1$d分钟</string>
+
+    <!-- API Key 弹窗 -->
+    <string name="apikey_dialog_title">配置 %1$s API Key</string>
+    <string name="apikey_dialog_desc">请输入%1$s的API Key，它将安全地保存在本地。</string>
+    <string name="apikey_dialog_placeholder">sk-xxxxxxxxxxxxxxxx</string>
+    <string name="apikey_dialog_current">当前已配置API Key</string>
+
+    <!-- 初始余额弹窗 -->
+    <string name="initial_balance_dialog_title">设置初始余额</string>
+    <string name="initial_balance_dialog_desc">填写火山方舟账户当前余额，用于本地估算剩余额度。</string>
+    <string name="initial_balance_label">初始余额（元）</string>
+
+    <!-- 更多 -->
+    <string name="more_title">更多</string>
+    <string name="more_group_support">支持</string>
+    <string name="more_group_about">关于</string>
+    <string name="more_check_update">检查更新</string>
+    <string name="more_current_version">当前版本 v%1$s</string>
+    <string name="more_check_action">检查</string>
+    <string name="more_download_update">点击前往 GitHub 下载 v%1$s</string>
+    <string name="more_github_repo">GitHub 仓库</string>
+    <string name="more_github_subtitle">github.com/coderirse/WatchDog</string>
+    <string name="more_license">开源许可</string>
+    <string name="more_license_subtitle">MIT License</string>
+    <string name="more_open_libs">依赖的开源库</string>
+    <string name="more_open_libs_subtitle">Jetpack Compose、Retrofit、Coil 等 %1$d 个</string>
+    <string name="more_version_info">版本信息</string>
+    <string name="more_copyright">© 2026 coderirse. All rights reserved.</string>
 </resources>

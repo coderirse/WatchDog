@@ -3,7 +3,7 @@ package com.example.watchdog.ui.navigation
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -13,12 +13,14 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.stringResource
 import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import com.example.watchdog.R
 import com.example.watchdog.ui.dashboard.DashboardScreen
 import com.example.watchdog.ui.more.MoreScreen
 
@@ -40,8 +42,8 @@ fun WatchDogNavGraph() {
     val currentRoute = navBackStackEntry?.destination?.route
 
     val bottomItems = listOf(
-        BottomNavItem(Routes.DASHBOARD, "额度", Icons.Filled.Home),
-        BottomNavItem(Routes.MORE, "更多", Icons.Filled.Settings)
+        BottomNavItem(Routes.DASHBOARD, stringResource(R.string.nav_quota), Icons.Filled.Home),
+        BottomNavItem(Routes.MORE, stringResource(R.string.nav_more), Icons.Filled.Menu)
     )
 
     Scaffold(

@@ -1,5 +1,7 @@
 package com.example.watchdog.ui.dashboard
 
+import android.content.res.Configuration
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -14,13 +16,15 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
@@ -37,16 +41,30 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.watchdog.R
 import com.example.watchdog.di.LocalAppContainer
+import com.example.watchdog.data.model.PlatformType
 import com.example.watchdog.data.model.QuotaInfo
 import com.example.watchdog.data.model.QuotaState
 import com.example.watchdog.ui.components.PlatformQuotaCard
+import com.example.watchdog.ui.theme.WatchDogTheme
+import com.example.watchdog.ui.theme.balanceNumeral
+import com.example.watchdog.ui.theme.onBrand
+import com.example.watchdog.ui.theme.onBrandSecondary
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -79,20 +97,40 @@ fun DashboardScreen(
         }
     }
 
+    DashboardContent(
+        quotaState = quotaState,
+        isRefreshing = isRefreshing,
+        isOffline = isOffline,
+        autoRefreshInterval = autoRefreshInterval,
+        onRefresh = { viewModel.refresh() },
+        onNavigateToSettings = onNavigateToSettings
+    )
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun DashboardContent(
+    quotaState: QuotaState,
+    isRefreshing: Boolean,
+    isOffline: Boolean,
+    autoRefreshInterval: Int,
+    onRefresh: () -> Unit,
+    onNavigateToSettings: () -> Unit
+) {
     Scaffold(
         topBar = {
             TopAppBar(
                 title = {
                     Text(
-                        text = "WatchDog",
+                        text = stringResource(R.string.app_name),
                         style = MaterialTheme.typography.headlineSmall
                     )
                 },
                 actions = {
-                    IconButton(onClick = { viewModel.refresh() }) {
+                    IconButton(onClick = onRefresh) {
                         Icon(
                             imageVector = Icons.Filled.Refresh,
-                            contentDescription = "刷新"
+                            contentDescription = stringResource(R.string.action_refresh)
                         )
                     }
                 },
@@ -103,64 +141,118 @@ fun DashboardScreen(
             )
         },
         floatingActionButton = {
-            FloatingActionButton(
-                onClick = onNavigateToSettings
-            ) {
+            FloatingActionButton(onClick = onNavigateToSettings) {
                 Icon(
                     imageVector = Icons.Filled.Settings,
-                    contentDescription = "设置API Key"
+                    contentDescription = stringResource(R.string.fab_settings_content_desc)
                 )
             }
         }
     ) { innerPadding ->
         PullToRefreshBox(
             isRefreshing = isRefreshing,
-            onRefresh = { viewModel.refresh() },
+            onRefresh = onRefresh,
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
         ) {
             when (val state = quotaState) {
-                is QuotaState.Loading -> {
-                    Box(
-                        modifier = Modifier.fillMaxSize(),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            CircularProgressIndicator()
-                            Spacer(modifier = Modifier.height(16.dp))
-                            Text(
-                                text = "正在查询额度信息...",
-                                style = MaterialTheme.typography.bodyLarge
-                            )
-                        }
-                    }
-                }
-                is QuotaState.Success -> {
-                    QuotaList(
-                        quotas = state.quotas,
-                        autoRefreshInterval = autoRefreshInterval,
-                        showOfflineBanner = isOffline
+                is QuotaState.Loading -> DashboardSkeleton()
+                is QuotaState.Success -> QuotaListOrEmpty(
+                    quotas = state.quotas,
+                    autoRefreshInterval = autoRefreshInterval,
+                    showOfflineBanner = isOffline,
+                    onNavigateToSettings = onNavigateToSettings
+                )
+                is QuotaState.PartialSuccess -> QuotaListOrEmpty(
+                    quotas = state.quotas,
+                    autoRefreshInterval = autoRefreshInterval,
+                    showOfflineBanner = isOffline,
+                    onNavigateToSettings = onNavigateToSettings
+                )
+                is QuotaState.Error -> ErrorContent(state.message)
+            }
+        }
+    }
+}
+
+// ===== Hero 总览卡 =====
+
+private val heroBrush: Brush = Brush.linearGradient(
+    colors = listOf(Color(0xFF1E3A8A), Color(0xFF06B6D4))
+)
+
+private fun formatClockTime(t: Long): String =
+    SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(t))
+
+@Composable
+fun HeroOverviewCard(quotas: List<QuotaInfo>, modifier: Modifier = Modifier) {
+    val configured = quotas.filter { it.isConfigured }
+    val normalCount = configured.count { it.errorMessage == null }
+    val abnormalCount = configured.size - normalCount
+    // 金额汇总：仅计按量付费平台，订阅配额平台无余额概念
+    val totalBalance = configured
+        .filter { it.errorMessage == null && !it.isSubscriptionMode }
+        .sumOf { it.totalBalance.toDoubleOrNull() ?: 0.0 }
+    val hasSubscription = configured.any { it.isSubscriptionMode }
+    val lastRefresh = configured.maxOfOrNull { it.lastUpdated }
+
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+    ) {
+        Box(modifier = Modifier.fillMaxWidth().background(heroBrush)) {
+            Column(modifier = Modifier.padding(20.dp)) {
+                Text(
+                    stringResource(R.string.hero_total_balance),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = onBrandSecondary
+                )
+                Spacer(modifier = Modifier.height(2.dp))
+                Row(verticalAlignment = Alignment.Bottom) {
+                    Text(
+                        text = String.format("%.2f", totalBalance),
+                        style = balanceNumeral,
+                        color = onBrand
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "CNY",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = onBrandSecondary,
+                        modifier = Modifier.padding(bottom = 4.dp)
                     )
                 }
-                is QuotaState.PartialSuccess -> {
-                    QuotaList(
-                        quotas = state.quotas,
-                        autoRefreshInterval = autoRefreshInterval,
-                        showOfflineBanner = isOffline
+                if (hasSubscription) {
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        stringResource(R.string.hero_subscription_excluded),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = onBrandSecondary
                     )
                 }
-                is QuotaState.Error -> {
-                    Box(
-                        modifier = Modifier.fillMaxSize(),
-                        contentAlignment = Alignment.Center
-                    ) {
+                Spacer(modifier = Modifier.height(12.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        stringResource(
+                            R.string.hero_platform_stats,
+                            quotas.size, normalCount, abnormalCount
+                        ),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = onBrandSecondary
+                    )
+                    if (lastRefresh != null) {
                         Text(
-                            text = state.message,
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = MaterialTheme.colorScheme.error,
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier.padding(32.dp)
+                            stringResource(
+                                R.string.hero_last_refresh,
+                                formatClockTime(lastRefresh)
+                            ),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = onBrandSecondary
                         )
                     }
                 }
@@ -169,12 +261,19 @@ fun DashboardScreen(
     }
 }
 
+// ===== 列表 / 空状态 =====
+
 @Composable
-private fun QuotaList(
+private fun QuotaListOrEmpty(
     quotas: List<QuotaInfo>,
     autoRefreshInterval: Int,
-    showOfflineBanner: Boolean
+    showOfflineBanner: Boolean,
+    onNavigateToSettings: () -> Unit
 ) {
+    if (quotas.none { it.isConfigured }) {
+        EmptyContent(onNavigateToSettings)
+        return
+    }
     LazyColumn(
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -185,6 +284,10 @@ private fun QuotaList(
             }
         }
 
+        item(key = "hero_overview") {
+            HeroOverviewCard(quotas = quotas)
+        }
+
         items(quotas, key = { it.platform.name }) { quota ->
             PlatformQuotaCard(quotaInfo = quota)
         }
@@ -192,7 +295,7 @@ private fun QuotaList(
         item {
             Spacer(modifier = Modifier.height(8.dp))
             Text(
-                text = "下拉刷新获取最新数据 · 自动刷新：每${autoRefreshInterval}分钟",
+                text = stringResource(R.string.dashboard_footer, autoRefreshInterval),
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.outline,
                 textAlign = TextAlign.Center,
@@ -201,6 +304,97 @@ private fun QuotaList(
             Spacer(modifier = Modifier.height(72.dp))
         }
     }
+}
+
+@Composable
+private fun EmptyContent(onNavigateToSettings: () -> Unit) {
+    Box(
+        modifier = Modifier.fillMaxSize().padding(32.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Box(
+                modifier = Modifier
+                    .size(72.dp)
+                    .clip(RoundedCornerShape(20.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Add,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.outline,
+                    modifier = Modifier.size(32.dp)
+                )
+            }
+            Spacer(modifier = Modifier.height(16.dp))
+            Text(
+                text = stringResource(R.string.dashboard_empty_title),
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onBackground
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = stringResource(R.string.dashboard_empty_subtitle),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+            Button(onClick = onNavigateToSettings) {
+                Text(stringResource(R.string.dashboard_empty_action))
+            }
+        }
+    }
+}
+
+@Composable
+private fun ErrorContent(message: String) {
+    Box(
+        modifier = Modifier.fillMaxSize().padding(32.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Icon(
+                imageVector = Icons.Filled.Warning,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.error,
+                modifier = Modifier.size(40.dp)
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            Text(
+                text = message,
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.error,
+                textAlign = TextAlign.Center
+            )
+        }
+    }
+}
+
+// ===== Loading 骨架 =====
+
+@Composable
+private fun DashboardSkeleton() {
+    LazyColumn(
+        contentPadding = PaddingValues(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+        userScrollEnabled = false
+    ) {
+        item { SkeletonBlock(height = 150) }
+        items(3) { SkeletonBlock(height = 170) }
+    }
+}
+
+@Composable
+private fun SkeletonBlock(height: Int) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(height.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+    )
 }
 
 @Composable
@@ -223,10 +417,73 @@ private fun OfflineBanner() {
             )
             Spacer(modifier = Modifier.width(8.dp))
             Text(
-                text = "网络异常，当前显示的是本地缓存数据，可能不是最新",
+                text = stringResource(R.string.dashboard_offline_banner),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onTertiaryContainer
             )
+        }
+    }
+}
+
+// ===== Preview =====
+
+private val previewQuotas = listOf(
+    QuotaInfo(
+        platform = PlatformType.DEEPSEEK,
+        isAvailable = true,
+        isConfigured = true,
+        totalBalance = "36.50",
+        monthlyUsage = "12.34"
+    ),
+    QuotaInfo(
+        platform = PlatformType.KIMI_CODE,
+        isAvailable = true,
+        isConfigured = true,
+        planName = "Andante 套餐"
+    ),
+    QuotaInfo.error(PlatformType.GLM, "HTTP 401")
+)
+
+@Composable
+private fun DashboardPreviewContent() {
+    DashboardContent(
+        quotaState = QuotaState.Success(previewQuotas),
+        isRefreshing = false,
+        isOffline = false,
+        autoRefreshInterval = 5,
+        onRefresh = {},
+        onNavigateToSettings = {}
+    )
+}
+
+@Preview(name = "仪表盘-浅色", showBackground = true)
+@Composable
+private fun DashboardPreviewLight() {
+    WatchDogTheme { DashboardPreviewContent() }
+}
+
+@Preview(name = "仪表盘-深色", showBackground = true, uiMode = Configuration.UI_MODE_NIGHT_YES)
+@Composable
+private fun DashboardPreviewDark() {
+    WatchDogTheme { DashboardPreviewContent() }
+}
+
+@Preview(name = "Hero总览卡-浅色", showBackground = true)
+@Composable
+private fun HeroOverviewCardPreviewLight() {
+    WatchDogTheme {
+        Box(modifier = Modifier.padding(16.dp)) {
+            HeroOverviewCard(quotas = previewQuotas)
+        }
+    }
+}
+
+@Preview(name = "Hero总览卡-深色", showBackground = true, uiMode = Configuration.UI_MODE_NIGHT_YES)
+@Composable
+private fun HeroOverviewCardPreviewDark() {
+    WatchDogTheme {
+        Box(modifier = Modifier.padding(16.dp)) {
+            HeroOverviewCard(quotas = previewQuotas)
         }
     }
 }

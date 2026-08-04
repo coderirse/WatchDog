@@ -36,3 +36,14 @@ interface SiliconFlowApi {
         @Header("Authorization") authorization: String
     ): Response<SiliconFlowBillingUsageResponse>
 }
+
+/**
+ * Kimi Code 订阅配额接口。
+ * 注意：必须使用相对路径 "v1/usages"，否则 Retrofit 会丢弃 baseUrl 中的 "/coding/" 前缀。
+ */
+interface KimiCodeApi {
+    @GET("v1/usages")
+    suspend fun getUsages(
+        @Header("Authorization") authorization: String
+    ): Response<KimiCodeUsagesResponse>
+}

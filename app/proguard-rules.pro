@@ -1,5 +1,15 @@
 # WatchDog ProGuard 规则
 
+# === R8 full mode 泛型反射保护（Retrofit/Gson 必需） ===
+# R8 全量模式下会剥离方法泛型签名，导致 Gson 反射解析 Response<T> 时抛
+# java.lang.Class cannot be cast to java.lang.reflect.ParameterizedType。
+-keep,allowobfuscation,allowshrinking class retrofit2.Response
+-keep,allowobfuscation,allowshrinking class retrofit2.Call
+-keep,allowobfuscation,allowshrinking class okhttp3.ResponseBody
+-keep,allowobfuscation,allowshrinking class kotlin.coroutines.Continuation
+-keep,allowobfuscation,allowshrinking class com.google.gson.reflect.TypeToken
+-keep,allowobfuscation,allowshrinking class * extends com.google.gson.reflect.TypeToken
+
 # === 保留泛型签名 & 注解（Gson/Retrofit 反射必需） ===
 -keepattributes Signature
 -keepattributes *Annotation*

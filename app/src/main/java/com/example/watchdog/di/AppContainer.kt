@@ -1,10 +1,13 @@
 package com.example.watchdog.di
 
 import android.content.Context
+import androidx.compose.runtime.State
+import androidx.compose.runtime.mutableStateOf
 import com.example.watchdog.BuildConfig
 import com.example.watchdog.data.api.DeepSeekApi
 import com.example.watchdog.data.api.GlmApi
 import com.example.watchdog.data.api.KimiApi
+import com.example.watchdog.data.api.KimiCodeApi
 import com.example.watchdog.data.api.SiliconFlowApi
 import com.example.watchdog.data.local.QuotaCacheStore
 import com.example.watchdog.data.local.SettingsStore
@@ -40,8 +43,9 @@ class AppContainer(context: Context) {
     // Retrofit APIs
     val deepSeekApi: DeepSeekApi = createApi("https://api.deepseek.com/")
     val kimiApi: KimiApi = createApi("https://api.moonshot.cn/")
-    val glmApi: GlmApi = createApi("https://open.bigmodel.cn/")
+    val glmApi: GlmApi = createApi("https://bigmodel.cn/")
     val siliconFlowApi: SiliconFlowApi = createApi("https://api.siliconflow.cn/")
+    val kimiCodeApi: KimiCodeApi = createApi("https://api.kimi.com/coding/")
 
     private inline fun <reified T> createApi(baseUrl: String): T {
         return Retrofit.Builder()
@@ -55,6 +59,18 @@ class AppContainer(context: Context) {
     // SettingsStore (需要Context)
     val settingsStore: SettingsStore = SettingsStore(context.applicationContext)
 
+    // 主题模式（Compose 状态）：设置页修改后 MainActivity 读取该状态即时重组生效
+    private val _themeMode = mutableStateOf(
+        kotlinx.coroutines.runBlocking { settingsStore.getThemeMode() }
+    )
+    val themeMode: State<String> = _themeMode
+
+    /** 保存并立即应用主题模式："system" / "light" / "dark" */
+    suspend fun setThemeMode(mode: String) {
+        settingsStore.saveThemeMode(mode)
+        _themeMode.value = mode
+    }
+
     // 额度缓存（断网回退用）
     val quotaCacheStore: QuotaCacheStore = QuotaCacheStore(context.applicationContext)
 
@@ -65,6 +81,7 @@ class AppContainer(context: Context) {
         deepSeekApi = deepSeekApi,
         kimiApi = kimiApi,
         glmApi = glmApi,
-        siliconFlowApi = siliconFlowApi
+        siliconFlowApi = siliconFlowApi,
+        kimiCodeApi = kimiCodeApi
     )
 }

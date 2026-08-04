@@ -62,7 +62,11 @@ class DashboardViewModel(
                     failedPlatforms.isNotEmpty() && failedPlatforms.size < configuredQuotas.size ->
                         QuotaState.PartialSuccess(quotas, failedPlatforms)
                     configuredQuotas.isNotEmpty() && failedPlatforms.size == configuredQuotas.size ->
-                        QuotaState.Error("所有已配置平台查询失败")
+                        QuotaState.Error(
+                            "所有已配置平台查询失败：" + configuredQuotas.joinToString("；") {
+                                "${it.platform.displayName}：${it.errorMessage ?: "未知错误"}"
+                            }
+                        )
                     else -> QuotaState.Success(quotas)
                 }
             } catch (e: Exception) {

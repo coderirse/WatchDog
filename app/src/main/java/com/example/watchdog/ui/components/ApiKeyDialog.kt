@@ -5,7 +5,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
@@ -19,10 +18,12 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import com.example.watchdog.R
 import com.example.watchdog.data.model.PlatformType
 
 @Composable
@@ -42,7 +43,7 @@ fun ApiKeyDialog(
         },
         title = {
             Text(
-                text = "配置 ${platform.displayName} API Key",
+                text = stringResource(R.string.apikey_dialog_title, platform.displayName),
                 style = MaterialTheme.typography.titleMedium
             )
         },
@@ -51,7 +52,7 @@ fun ApiKeyDialog(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Text(
-                    text = "请输入${platform.displayName}的API Key，它将安全地保存在本地。",
+                    text = stringResource(R.string.apikey_dialog_desc, platform.displayName),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -60,7 +61,7 @@ fun ApiKeyDialog(
                     value = apiKeyInput,
                     onValueChange = { apiKeyInput = it },
                     label = { Text("API Key") },
-                    placeholder = { Text("sk-xxxxxxxxxxxxxxxx") },
+                    placeholder = { Text(stringResource(R.string.apikey_dialog_placeholder)) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                     visualTransformation = PasswordVisualTransformation(),
@@ -79,7 +80,7 @@ fun ApiKeyDialog(
                 if (currentApiKey.isNotEmpty()) {
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = "当前已配置API Key",
+                        text = stringResource(R.string.apikey_dialog_current),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.outline
                     )
@@ -95,7 +96,7 @@ fun ApiKeyDialog(
                 },
                 enabled = apiKeyInput.isNotBlank()
             ) {
-                Text("保存")
+                Text(stringResource(R.string.action_save))
             }
         },
         dismissButton = {
@@ -103,13 +104,13 @@ fun ApiKeyDialog(
                 if (currentApiKey.isNotEmpty()) {
                     TextButton(onClick = { onDelete(platform) }) {
                         Text(
-                            text = "删除",
+                            text = stringResource(R.string.action_delete),
                             color = MaterialTheme.colorScheme.error
                         )
                     }
                 }
                 TextButton(onClick = onDismiss) {
-                    Text("取消")
+                    Text(stringResource(R.string.action_cancel))
                 }
             }
         }

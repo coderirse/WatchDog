@@ -2,4 +2,11 @@
 <resources>
 
     <style name="Theme.WatchDog" parent="android:Theme.Material.Light.NoActionBar" />
+
+    <!-- 启动画面主题：installSplashScreen() 后由 postSplashScreenTheme 接管 -->
+    <style name="Theme.WatchDog.Splash" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">#F8FAFC</item>
+        <item name="windowSplashScreenAnimatedIcon">@mipmap/ic_launcher_foreground</item>
+        <item name="postSplashScreenTheme">@style/Theme.WatchDog</item>
+    </style>
 </resources>

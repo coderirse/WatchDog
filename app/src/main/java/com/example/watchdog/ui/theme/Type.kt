@@ -32,3 +32,16 @@ val Typography = Typography(
     )
     */
 )
+
+/**
+ * 余额大数字强调样式：加粗 + tabular 数字（等宽数字，避免金额刷新时跳动）。
+ * 在 Typography 之外独立暴露，用于余额卡片等大数字场景。
+ */
+val balanceNumeral = TextStyle(
+    fontFamily = FontFamily.Default,
+    fontWeight = FontWeight.Bold,
+    fontSize = 32.sp,
+    lineHeight = 40.sp,
+    letterSpacing = 0.sp,
+    fontFeatureSettings = "tnum"
+)

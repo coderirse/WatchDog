@@ -13,7 +13,24 @@ data class ModelUsage(
 )
 
 /**
- * 统一的平台额度数据模型
+ * 订阅配额窗口（订阅制平台专用，如 Kimi Code 的 5小时/周/月 窗口）。
+ * 所有字段可空：接口未实测，任何字段缺失都不影响其余字段展示。
+ */
+data class QuotaWindow(
+    val name: String?,              // 窗口名称，如 "5小时" / "周" / "月"
+    val used: Double? = null,       // 已用额度
+    val remaining: Double? = null,  // 剩余额度
+    val limit: Double? = null,      // 窗口总量
+    val resetTime: Long? = null,    // 配额重置时间（epoch millis）
+    val expiresAt: Long? = null     // 到期时间（epoch millis）
+)
+
+/**
+ * 统一的平台额度数据模型。
+ * 支持两种模式：
+ * 1. 按量付费余额模式（现有 4 平台）：totalBalance / monthlyUsage / monthlyLimit；
+ * 2. 订阅配额模式（如 Kimi Code）：planName / quotaWindows / boosterInfo，
+ *    该模式下 totalBalance 无意义，保持默认值。
  */
 data class QuotaInfo(
     val platform: PlatformType,
@@ -26,11 +43,32 @@ data class QuotaInfo(
     val errorMessage: String? = null,
     val modelUsages: List<ModelUsage> = emptyList(),  // 按模型用量明细
     val lastUpdated: Long = System.currentTimeMillis(),
-    val isStale: Boolean = false  // true 表示该数据来自本地缓存（离线回退）
+    val isStale: Boolean = false,  // true 表示该数据来自本地缓存（离线回退）
+    // ===== 以下为新增字段，均有默认值，不影响既有构造与缓存反序列化 =====
+    val isEstimate: Boolean = false,        // true 表示余额为本地估算（如火山方舟），UI 应标注"估算"
+    val planName: String? = null,           // 订阅套餐名（订阅配额模式）
+    val quotaWindows: List<QuotaWindow> = emptyList(),  // 订阅配额窗口（订阅配额模式）
+    val boosterInfo: String? = null         // booster 描述（订阅配额模式）
 ) {
     val hasModelUsage: Boolean get() = modelUsages.isNotEmpty()
     val totalRequestCount: Long get() = modelUsages.sumOf { it.requestCount }
     val totalTokensUsed: Long get() = modelUsages.sumOf { it.totalTokens }
+
+    /** 是否为订阅配额模式（存在套餐名或配额窗口） */
+    val isSubscriptionMode: Boolean get() = planName != null || quotaWindows.isNotEmpty()
+
+    /**
+     * 订阅配额模式下所有窗口中最小的剩余占比（0.0~1.0），用于低余额/耗尽状态推导；
+     * 按量付费模式或窗口缺少 remaining/limit 时为 null。
+     */
+    val lowestRemainingFraction: Double?
+        get() = quotaWindows.mapNotNull { w ->
+            val limit = w.limit
+            val remaining = w.remaining
+            if (limit != null && limit > 0 && remaining != null) {
+                (remaining / limit).coerceIn(0.0, 1.0)
+            } else null
+        }.minOrNull()
 
     companion object {
         fun notConfigured(platform: PlatformType): QuotaInfo {

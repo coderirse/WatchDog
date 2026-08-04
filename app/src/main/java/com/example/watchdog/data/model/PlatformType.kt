@@ -49,5 +49,26 @@ enum class PlatformType(
         brandColor = Color(0xFF00B96B),
         logoUrl = "https://registry.npmmirror.com/@lobehub/icons-static-png/latest/files/dark/siliconcloud.png",
         description = "SiliconFlow AI推理平台"
+    ),
+    VOLCENGINE_ARK(
+        displayName = "火山方舟",
+        baseUrl = "https://ark.cn-beijing.volces.com/api/v3/",
+        // 方舟无"仅凭 API Key 查余额"的官方接口（费用中心需 AK/SK 签名），
+        // 余额为用户手动填写的初始值 + 本地月度追踪的估算模式，不发起远程请求
+        balanceEndpoint = "",
+        initials = "AR",
+        brandColor = Color(0xFFFA541C),
+        logoUrl = "https://registry.npmmirror.com/@lobehub/icons-static-png/latest/files/dark/volcengine.png",
+        description = "火山方舟大模型平台（余额为本地估算，需手动填写初始余额）"
+    ),
+    KIMI_CODE(
+        displayName = "Kimi Code",
+        baseUrl = "https://api.kimi.com/coding/",
+        balanceEndpoint = "v1/usages",
+        initials = "KC",
+        brandColor = Color(0xFF111827),
+        // 与 Kimi 开放平台同源图标；Kimi Code 为独立产品，API Key 与 Kimi 开放平台互不复用
+        logoUrl = "https://registry.npmmirror.com/@lobehub/icons-static-png/latest/files/dark/moonshot.png",
+        description = "Kimi Code 编程订阅（API Key 独立于 Kimi 开放平台）"
     );
 }

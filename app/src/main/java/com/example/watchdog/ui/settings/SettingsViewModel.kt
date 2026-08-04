@@ -14,7 +14,9 @@ import kotlinx.coroutines.launch
 data class PlatformSettingsState(
     val platform: PlatformType,
     val isEnabled: Boolean = false,
-    val apiKey: String = ""
+    val apiKey: String = "",
+    /** 手动填写的初始余额（估算模式平台用，当前仅火山方舟） */
+    val initialBalance: Double? = null
 )
 
 data class SettingsUiState(
@@ -22,14 +24,18 @@ data class SettingsUiState(
         PlatformSettingsState(platform = it)
     },
     val autoRefreshInterval: Int = 5,
-    val showApiKeyDialog: PlatformType? = null
+    val themeMode: String = "system",
+    val showApiKeyDialog: PlatformType? = null,
+    val showInitialBalanceDialog: Boolean = false
 )
 
 class SettingsViewModel(
-    private val settingsStore: SettingsStore
+    private val appContainer: AppContainer
 ) : ViewModel() {
 
-    private val _uiState = MutableStateFlow(SettingsUiState())
+    private val settingsStore: SettingsStore = appContainer.settingsStore
+
+    private val _uiState = MutableStateFlow(SettingsUiState(themeMode = appContainer.themeMode.value))
     val uiState: StateFlow<SettingsUiState> = _uiState.asStateFlow()
 
     init {
@@ -44,13 +50,15 @@ class SettingsViewModel(
                 PlatformSettingsState(
                     platform = platform,
                     isEnabled = enabled,
-                    apiKey = apiKey
+                    apiKey = apiKey,
+                    initialBalance = settingsStore.getInitialBalance(platform)
                 )
             }
             val interval = settingsStore.getAutoRefreshInterval()
             _uiState.value = _uiState.value.copy(
                 platforms = platforms,
-                autoRefreshInterval = interval
+                autoRefreshInterval = interval,
+                themeMode = appContainer.themeMode.value
             )
         }
     }
@@ -95,11 +103,36 @@ class SettingsViewModel(
         }
     }
 
+    /** 修改主题模式：持久化并通过 AppContainer 状态即时应用到 MainActivity */
+    fun updateThemeMode(mode: String) {
+        viewModelScope.launch {
+            appContainer.setThemeMode(mode)
+            _uiState.value = _uiState.value.copy(themeMode = mode)
+        }
+    }
+
+    fun showInitialBalanceDialog() {
+        _uiState.value = _uiState.value.copy(showInitialBalanceDialog = true)
+    }
+
+    fun dismissInitialBalanceDialog() {
+        _uiState.value = _uiState.value.copy(showInitialBalanceDialog = false)
+    }
+
+    /** 保存火山方舟手动初始余额；传 null 表示清除 */
+    fun saveInitialBalance(balance: Double?) {
+        viewModelScope.launch {
+            settingsStore.saveInitialBalance(PlatformType.VOLCENGINE_ARK, balance)
+            dismissInitialBalanceDialog()
+            loadSettings()
+        }
+    }
+
     companion object {
         fun factory(container: AppContainer): ViewModelProvider.Factory = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T {
-                return SettingsViewModel(container.settingsStore) as T
+                return SettingsViewModel(container) as T
             }
         }
     }

@@ -1,5 +1,6 @@
 package com.example.watchdog.ui.settings
 
+import android.content.res.Configuration
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -9,14 +10,13 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Lock
-import com.example.watchdog.ui.components.PlatformLogo
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -25,7 +25,11 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -38,12 +42,18 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.watchdog.R
 import com.example.watchdog.di.LocalAppContainer
 import com.example.watchdog.data.model.PlatformType
 import com.example.watchdog.ui.components.ApiKeyDialog
+import com.example.watchdog.ui.components.PlatformLogo
+import com.example.watchdog.ui.theme.WatchDogTheme
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -54,15 +64,60 @@ fun SettingsScreen(
     val viewModel: SettingsViewModel = viewModel(factory = SettingsViewModel.factory(appContainer))
     val uiState by viewModel.uiState.collectAsState()
 
+    SettingsContent(
+        uiState = uiState,
+        onBack = onBack,
+        onToggleEnabled = { platform, enabled -> viewModel.toggleEnabled(platform, enabled) },
+        onPlatformClick = { viewModel.showApiKeyDialog(it) },
+        onIntervalChange = { viewModel.updateRefreshInterval(it) },
+        onThemeModeChange = { viewModel.updateThemeMode(it) },
+        onEditInitialBalance = { viewModel.showInitialBalanceDialog() }
+    )
+
+    uiState.showApiKeyDialog?.let { platform ->
+        val currentApiKey = uiState.platforms
+            .find { it.platform == platform }?.apiKey ?: ""
+
+        ApiKeyDialog(
+            platform = platform,
+            currentApiKey = currentApiKey,
+            onDismiss = { viewModel.dismissApiKeyDialog() },
+            onSave = { p, key -> viewModel.saveApiKey(p, key) },
+            onDelete = { p -> viewModel.deleteApiKey(p) }
+        )
+    }
+
+    if (uiState.showInitialBalanceDialog) {
+        val currentBalance = uiState.platforms
+            .find { it.platform == PlatformType.VOLCENGINE_ARK }?.initialBalance
+        InitialBalanceDialog(
+            currentBalance = currentBalance,
+            onDismiss = { viewModel.dismissInitialBalanceDialog() },
+            onSave = { viewModel.saveInitialBalance(it) }
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun SettingsContent(
+    uiState: SettingsUiState,
+    onBack: () -> Unit,
+    onToggleEnabled: (PlatformType, Boolean) -> Unit,
+    onPlatformClick: (PlatformType) -> Unit,
+    onIntervalChange: (Int) -> Unit,
+    onThemeModeChange: (String) -> Unit,
+    onEditInitialBalance: () -> Unit
+) {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("API Key 管理") },
+                title = { Text(stringResource(R.string.settings_title)) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "返回"
+                            contentDescription = stringResource(R.string.action_back)
                         )
                     }
                 }
@@ -76,70 +131,99 @@ fun SettingsScreen(
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            items(uiState.platforms) { platformState ->
+            item {
+                SectionHeader(stringResource(R.string.settings_group_platforms))
+            }
+
+            items(uiState.platforms, key = { it.platform.name }) { platformState ->
                 PlatformSettingsCard(
                     platformState = platformState,
                     onToggleEnabled = { enabled ->
-                        viewModel.toggleEnabled(platformState.platform, enabled)
+                        onToggleEnabled(platformState.platform, enabled)
                     },
-                    onConfigureApiKey = {
-                        viewModel.showApiKeyDialog(platformState.platform)
-                    }
+                    onClick = { onPlatformClick(platformState.platform) },
+                    onEditInitialBalance = onEditInitialBalance
                 )
             }
 
             item {
-                Spacer(modifier = Modifier.height(8.dp))
+                Spacer(modifier = Modifier.height(4.dp))
+                SectionHeader(stringResource(R.string.settings_group_general))
+            }
+
+            item {
                 RefreshIntervalCard(
                     currentInterval = uiState.autoRefreshInterval,
-                    onIntervalChange = { viewModel.updateRefreshInterval(it) }
+                    onIntervalChange = onIntervalChange
                 )
             }
-        }
 
-        uiState.showApiKeyDialog?.let { platform ->
-            val currentApiKey = uiState.platforms
-                .find { it.platform == platform }?.apiKey ?: ""
-
-            ApiKeyDialog(
-                platform = platform,
-                currentApiKey = currentApiKey,
-                onDismiss = { viewModel.dismissApiKeyDialog() },
-                onSave = { p, key -> viewModel.saveApiKey(p, key) },
-                onDelete = { p -> viewModel.deleteApiKey(p) }
-            )
+            item {
+                ThemeCard(
+                    themeMode = uiState.themeMode,
+                    onThemeModeChange = onThemeModeChange
+                )
+            }
         }
     }
 }
 
 @Composable
+private fun SectionHeader(title: String) {
+    Text(
+        text = title,
+        style = MaterialTheme.typography.titleSmall,
+        color = MaterialTheme.colorScheme.primary,
+        fontWeight = FontWeight.Bold,
+        modifier = Modifier.padding(start = 4.dp, top = 4.dp)
+    )
+}
+
+// ===== 平台配置卡 =====
+
+@Composable
+private fun consoleHost(platform: PlatformType): String = when (platform) {
+    PlatformType.DEEPSEEK -> stringResource(R.string.settings_console_deepseek)
+    PlatformType.KIMI -> stringResource(R.string.settings_console_kimi)
+    PlatformType.GLM -> stringResource(R.string.settings_console_glm)
+    PlatformType.SILICONFLOW -> stringResource(R.string.settings_console_siliconflow)
+    PlatformType.VOLCENGINE_ARK -> stringResource(R.string.settings_console_volcengine)
+    PlatformType.KIMI_CODE -> stringResource(R.string.settings_console_kimi_code)
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
 private fun PlatformSettingsCard(
     platformState: PlatformSettingsState,
     onToggleEnabled: (Boolean) -> Unit,
-    onConfigureApiKey: () -> Unit
+    onClick: () -> Unit,
+    onEditInitialBalance: () -> Unit
 ) {
+    val platform = platformState.platform
+    val hasKey = platformState.apiKey.isNotEmpty()
+
     Card(
+        onClick = onClick,
         modifier = Modifier.fillMaxWidth()
     ) {
-        Column(
-            modifier = Modifier.padding(16.dp)
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                PlatformLogo(platform = platformState.platform, size = 28)
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                PlatformLogo(platform = platform, size = 32)
                 Spacer(modifier = Modifier.width(12.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = platformState.platform.displayName,
+                        text = platform.displayName,
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        text = if (platformState.apiKey.isNotEmpty())
-                            "API Key: ${platformState.apiKey.take(6)}...${platformState.apiKey.takeLast(4)}"
-                        else
-                            "未配置API Key",
+                        text = if (hasKey)
+                            stringResource(
+                                R.string.settings_api_key_masked,
+                                platformState.apiKey.take(6),
+                                platformState.apiKey.takeLast(4)
+                            )
+                        else stringResource(R.string.settings_api_key_empty),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -147,41 +231,64 @@ private fun PlatformSettingsCard(
                 Switch(
                     checked = platformState.isEnabled,
                     onCheckedChange = onToggleEnabled,
-                    enabled = platformState.apiKey.isNotEmpty()
+                    enabled = hasKey
                 )
             }
-            if (platformState.apiKey.isEmpty() || !platformState.isEnabled) {
-                Spacer(modifier = Modifier.height(8.dp))
+
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = stringResource(R.string.settings_create_key_hint, consoleHost(platform)),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.outline
+            )
+
+            if (platform == PlatformType.KIMI_CODE) {
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = stringResource(R.string.settings_kimi_code_independent),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.outline
+                )
+            }
+
+            if (platform == PlatformType.VOLCENGINE_ARK) {
+                Spacer(modifier = Modifier.height(10.dp))
                 HorizontalDivider()
-                Spacer(modifier = Modifier.height(8.dp))
-                TextButton(
-                    onClick = onConfigureApiKey,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.Lock,
-                        contentDescription = null,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text("配置API Key")
-                }
-            } else {
-                Spacer(modifier = Modifier.height(8.dp))
-                HorizontalDivider()
-                Spacer(modifier = Modifier.height(8.dp))
+                Spacer(modifier = Modifier.height(10.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    TextButton(onClick = onConfigureApiKey) {
-                        Text("修改")
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = stringResource(R.string.settings_ark_initial_balance_title),
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                        Text(
+                            text = platformState.initialBalance?.let {
+                                stringResource(R.string.settings_ark_initial_balance_value, it.toString())
+                            } ?: stringResource(R.string.settings_ark_initial_balance_empty),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    TextButton(onClick = onEditInitialBalance) {
+                        Text(stringResource(R.string.settings_ark_edit_balance))
                     }
                 }
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = stringResource(R.string.settings_ark_initial_balance_desc),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.outline
+                )
             }
         }
     }
 }
+
+// ===== 通用设置 =====
 
 @Composable
 private fun RefreshIntervalCard(
@@ -200,12 +307,12 @@ private fun RefreshIntervalCard(
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             Text(
-                text = "自动刷新间隔",
+                text = stringResource(R.string.settings_refresh_interval),
                 style = MaterialTheme.typography.titleSmall
             )
             Column(horizontalAlignment = Alignment.End) {
                 TextButton(onClick = { expanded = true }) {
-                    Text("${currentInterval}分钟")
+                    Text(stringResource(R.string.settings_interval_minutes, currentInterval))
                 }
                 DropdownMenu(
                     expanded = expanded,
@@ -215,8 +322,9 @@ private fun RefreshIntervalCard(
                         DropdownMenuItem(
                             text = {
                                 Text(
-                                    if (interval == currentInterval) "● ${interval}分钟"
-                                    else "${interval}分钟"
+                                    if (interval == currentInterval)
+                                        stringResource(R.string.settings_interval_selected, interval)
+                                    else stringResource(R.string.settings_interval_minutes, interval)
                                 )
                             },
                             onClick = {
@@ -229,4 +337,143 @@ private fun RefreshIntervalCard(
             }
         }
     }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ThemeCard(
+    themeMode: String,
+    onThemeModeChange: (String) -> Unit
+) {
+    val options = listOf(
+        "system" to stringResource(R.string.theme_follow_system),
+        "light" to stringResource(R.string.theme_light),
+        "dark" to stringResource(R.string.theme_dark)
+    )
+
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                text = stringResource(R.string.settings_theme_title),
+                style = MaterialTheme.typography.titleSmall
+            )
+            Spacer(modifier = Modifier.height(10.dp))
+            SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                options.forEachIndexed { index, (mode, label) ->
+                    SegmentedButton(
+                        selected = themeMode == mode,
+                        onClick = { onThemeModeChange(mode) },
+                        shape = SegmentedButtonDefaults.itemShape(
+                            index = index,
+                            count = options.size
+                        )
+                    ) {
+                        Text(label)
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ===== 火山方舟初始余额弹窗 =====
+
+@Composable
+private fun InitialBalanceDialog(
+    currentBalance: Double?,
+    onDismiss: () -> Unit,
+    onSave: (Double?) -> Unit
+) {
+    var input by remember { mutableStateOf(currentBalance?.toString() ?: "") }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                text = stringResource(R.string.initial_balance_dialog_title),
+                style = MaterialTheme.typography.titleMedium
+            )
+        },
+        text = {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    text = stringResource(R.string.initial_balance_dialog_desc),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = input,
+                    onValueChange = { input = it },
+                    label = { Text(stringResource(R.string.initial_balance_label)) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { input.toDoubleOrNull()?.let(onSave) },
+                enabled = input.toDoubleOrNull() != null
+            ) {
+                Text(stringResource(R.string.action_save))
+            }
+        },
+        dismissButton = {
+            Row {
+                if (currentBalance != null) {
+                    TextButton(onClick = { onSave(null) }) {
+                        Text(
+                            text = stringResource(R.string.action_clear),
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
+                }
+                TextButton(onClick = onDismiss) {
+                    Text(stringResource(R.string.action_cancel))
+                }
+            }
+        }
+    )
+}
+
+// ===== Preview =====
+
+private val previewUiState = SettingsUiState(
+    platforms = listOf(
+        PlatformSettingsState(PlatformType.DEEPSEEK, isEnabled = true, apiKey = "sk-abcdef1234567890"),
+        PlatformSettingsState(PlatformType.KIMI),
+        PlatformSettingsState(PlatformType.GLM, isEnabled = true, apiKey = "glm-xyz987654321"),
+        PlatformSettingsState(PlatformType.SILICONFLOW),
+        PlatformSettingsState(PlatformType.VOLCENGINE_ARK, isEnabled = true, apiKey = "ark-abcd1234", initialBalance = 100.0),
+        PlatformSettingsState(PlatformType.KIMI_CODE)
+    ),
+    autoRefreshInterval = 5,
+    themeMode = "system"
+)
+
+@Composable
+private fun SettingsPreviewContent() {
+    SettingsContent(
+        uiState = previewUiState,
+        onBack = {},
+        onToggleEnabled = { _, _ -> },
+        onPlatformClick = {},
+        onIntervalChange = {},
+        onThemeModeChange = {},
+        onEditInitialBalance = {}
+    )
+}
+
+@Preview(name = "设置-浅色", showBackground = true)
+@Composable
+private fun SettingsPreviewLight() {
+    WatchDogTheme { SettingsPreviewContent() }
+}
+
+@Preview(name = "设置-深色", showBackground = true, uiMode = Configuration.UI_MODE_NIGHT_YES)
+@Composable
+private fun SettingsPreviewDark() {
+    WatchDogTheme { SettingsPreviewContent() }
 }

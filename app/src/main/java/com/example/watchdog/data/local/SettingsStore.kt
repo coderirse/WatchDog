@@ -86,6 +86,9 @@ class SettingsStore(
             PlatformType.KIMI -> "kimi_api_key"
             PlatformType.GLM -> "glm_api_key"
             PlatformType.SILICONFLOW -> "siliconflow_api_key"
+            // Kimi Code 与 Kimi 开放平台为独立产品，API Key 独立存储，互不复用
+            PlatformType.VOLCENGINE_ARK -> "volcengine_ark_api_key"
+            PlatformType.KIMI_CODE -> "kimi_code_api_key"
         }
     }
 
@@ -95,6 +98,8 @@ class SettingsStore(
             PlatformType.KIMI -> "kimi_enabled"
             PlatformType.GLM -> "glm_enabled"
             PlatformType.SILICONFLOW -> "siliconflow_enabled"
+            PlatformType.VOLCENGINE_ARK -> "volcengine_ark_enabled"
+            PlatformType.KIMI_CODE -> "kimi_code_enabled"
         }
     }
 
@@ -193,6 +198,48 @@ class SettingsStore(
             PlatformType.KIMI -> "kimi"
             PlatformType.GLM -> "glm"
             PlatformType.SILICONFLOW -> "siliconflow"
+            PlatformType.VOLCENGINE_ARK -> "volcengine_ark"
+            PlatformType.KIMI_CODE -> "kimi_code"
+        }
+    }
+
+    // ===== 手动初始余额（估算模式平台用，当前仅火山方舟） =====
+
+    /**
+     * 保存用户手动填写的初始余额；传 null 表示清除。
+     * 非密钥数据，不加密、不经 Keystore；以字符串存储避免 Float 精度损失。
+     */
+    suspend fun saveInitialBalance(platform: PlatformType, balance: Double?) {
+        withContext(Dispatchers.IO) {
+            prefs.edit {
+                val key = "${getPrefix(platform)}_initial_balance"
+                if (balance == null) remove(key) else putString(key, balance.toString())
+            }
+        }
+    }
+
+    /** 读取用户手动填写的初始余额；未填写返回 null */
+    suspend fun getInitialBalance(platform: PlatformType): Double? {
+        return withContext(Dispatchers.IO) {
+            prefs.getString("${getPrefix(platform)}_initial_balance", null)?.toDoubleOrNull()
+        }
+    }
+
+    // ===== 主题模式 =====
+
+    /** 保存主题模式："system" / "light" / "dark"，非法值回退 "system" */
+    suspend fun saveThemeMode(mode: String) {
+        withContext(Dispatchers.IO) {
+            val valid = if (mode in THEME_MODES) mode else THEME_MODE_SYSTEM
+            prefs.edit { putString(KEY_THEME_MODE, valid) }
+        }
+    }
+
+    /** 读取主题模式，默认 "system" */
+    suspend fun getThemeMode(): String {
+        return withContext(Dispatchers.IO) {
+            prefs.getString(KEY_THEME_MODE, THEME_MODE_SYSTEM)
+                ?.takeIf { it in THEME_MODES } ?: THEME_MODE_SYSTEM
         }
     }
 
@@ -203,5 +250,8 @@ class SettingsStore(
         const val ENCRYPTED_PREFIX = "enc:v1:"
         const val GCM_IV_LENGTH = 12
         const val GCM_TAG_BITS = 128
+        const val KEY_THEME_MODE = "theme_mode"
+        const val THEME_MODE_SYSTEM = "system"
+        val THEME_MODES = setOf("system", "light", "dark")
     }
 }
