@@ -65,9 +65,25 @@
 # APK 输出: app/build/outputs/apk/release/app-release.apk
 ```
 
-## 持续集成
+## 持续集成与自动发布
 
-`.github/workflows/android.yml` 在 push / PR 时自动执行单元测试，并构建 debug 与 release APK（校验 R8 混淆），产出 debug APK 工件。
+- `.github/workflows/android.yml`：push / PR 到 master 时执行单元测试，并构建 debug 与 release APK（校验 R8 混淆），产出 debug APK 工件。
+- `.github/workflows/release.yml`：推送 `v*` 标签时自动构建**签名** release APK 并发布到 GitHub Releases。
+
+### 发布新版本
+
+1. 修改 `app/build.gradle.kts` 中的 `versionCode` / `versionName`
+2. 提交并打标签：`git tag v1.2.0 && git push origin master --tags`
+3. CI 会自动构建签名 APK 并创建对应 Release（使用 `--generate-notes` 生成变更说明）
+
+需在仓库 Actions Secrets 中预先配置以下签名密钥：
+
+| Secret | 说明 |
+|--------|------|
+| `RELEASE_KEYSTORE_BASE64` | `release.keystore` 的 Base64 编码 |
+| `RELEASE_KEYSTORE_PASSWORD` | keystore 密码 |
+| `RELEASE_KEY_ALIAS` | key 别名（如 `watchdog`） |
+| `RELEASE_KEY_PASSWORD` | key 密码 |
 
 ## License
 
