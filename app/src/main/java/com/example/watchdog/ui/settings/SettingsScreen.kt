@@ -1,6 +1,11 @@
 package com.example.watchdog.ui.settings
 
+import android.Manifest
+import android.content.pm.PackageManager
 import android.content.res.Configuration
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -10,14 +15,17 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -42,11 +50,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.watchdog.R
 import com.example.watchdog.di.LocalAppContainer
@@ -54,6 +64,7 @@ import com.example.watchdog.data.model.PlatformType
 import com.example.watchdog.ui.components.ApiKeyDialog
 import com.example.watchdog.ui.components.PlatformLogo
 import com.example.watchdog.ui.theme.WatchDogTheme
+import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -63,6 +74,21 @@ fun SettingsScreen(
     val appContainer = LocalAppContainer.current
     val viewModel: SettingsViewModel = viewModel(factory = SettingsViewModel.factory(appContainer))
     val uiState by viewModel.uiState.collectAsState()
+    val context = LocalContext.current
+
+    // 开启余额预警时，在 Android 13+ 请求通知权限；未授权时通知会静默跳过
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { /* 结果无需处理 */ }
+
+    fun requestNotificationPermissionIfNeeded() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS)
+                != PackageManager.PERMISSION_GRANTED
+        ) {
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
 
     SettingsContent(
         uiState = uiState,
@@ -71,7 +97,13 @@ fun SettingsScreen(
         onPlatformClick = { viewModel.showApiKeyDialog(it) },
         onIntervalChange = { viewModel.updateRefreshInterval(it) },
         onThemeModeChange = { viewModel.updateThemeMode(it) },
-        onEditInitialBalance = { viewModel.showInitialBalanceDialog() }
+        onEditInitialBalance = { viewModel.showInitialBalanceDialog() },
+        onToggleBalanceAlert = { enabled ->
+            viewModel.toggleBalanceAlert(enabled)
+            if (enabled) requestNotificationPermissionIfNeeded()
+        },
+        onEditBalanceThreshold = { viewModel.showBalanceThresholdDialog() },
+        onEditBalanceFraction = { viewModel.showBalanceFractionDialog() }
     )
 
     uiState.showApiKeyDialog?.let { platform ->
@@ -96,6 +128,22 @@ fun SettingsScreen(
             onSave = { viewModel.saveInitialBalance(it) }
         )
     }
+
+    if (uiState.showBalanceThresholdDialog) {
+        BalanceThresholdDialog(
+            currentThreshold = uiState.balanceAlertThreshold,
+            onDismiss = { viewModel.dismissBalanceThresholdDialog() },
+            onSave = { viewModel.updateBalanceAlertThreshold(it) }
+        )
+    }
+
+    if (uiState.showBalanceFractionDialog) {
+        BalanceFractionDialog(
+            currentFraction = uiState.balanceAlertFractionThreshold,
+            onDismiss = { viewModel.dismissBalanceFractionDialog() },
+            onSave = { viewModel.updateBalanceAlertFraction(it) }
+        )
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -107,7 +155,10 @@ fun SettingsContent(
     onPlatformClick: (PlatformType) -> Unit,
     onIntervalChange: (Int) -> Unit,
     onThemeModeChange: (String) -> Unit,
-    onEditInitialBalance: () -> Unit
+    onEditInitialBalance: () -> Unit,
+    onToggleBalanceAlert: (Boolean) -> Unit,
+    onEditBalanceThreshold: () -> Unit,
+    onEditBalanceFraction: () -> Unit
 ) {
     Scaffold(
         topBar = {
@@ -131,6 +182,12 @@ fun SettingsContent(
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
+            if (uiState.encryptionDegraded) {
+                item(key = "encryption_warning") {
+                    EncryptionWarningCard()
+                }
+            }
+
             item {
                 SectionHeader(stringResource(R.string.settings_group_platforms))
             }
@@ -162,6 +219,17 @@ fun SettingsContent(
                 ThemeCard(
                     themeMode = uiState.themeMode,
                     onThemeModeChange = onThemeModeChange
+                )
+            }
+
+            item {
+                BalanceAlertCard(
+                    enabled = uiState.balanceAlertEnabled,
+                    threshold = uiState.balanceAlertThreshold,
+                    fractionThreshold = uiState.balanceAlertFractionThreshold,
+                    onToggleEnabled = onToggleBalanceAlert,
+                    onEditThreshold = onEditBalanceThreshold,
+                    onEditFraction = onEditBalanceFraction
                 )
             }
         }
@@ -376,6 +444,232 @@ private fun ThemeCard(
     }
 }
 
+// ===== 加密降级告警卡 =====
+
+@Composable
+private fun EncryptionWarningCard() {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
+    ) {
+        Row(
+            modifier = Modifier.padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = Icons.Filled.Warning,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onErrorContainer,
+                modifier = Modifier.size(20.dp)
+            )
+            Spacer(modifier = Modifier.width(10.dp))
+            Text(
+                text = stringResource(R.string.settings_encryption_degraded),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onErrorContainer
+            )
+        }
+    }
+}
+
+// ===== 余额预警卡 =====
+
+@Composable
+private fun BalanceAlertCard(
+    enabled: Boolean,
+    threshold: Double,
+    fractionThreshold: Double,
+    onToggleEnabled: (Boolean) -> Unit,
+    onEditThreshold: () -> Unit,
+    onEditFraction: () -> Unit
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = stringResource(R.string.settings_balance_alert_title),
+                        style = MaterialTheme.typography.titleSmall
+                    )
+                    Text(
+                        text = stringResource(R.string.settings_balance_alert_desc),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = enabled,
+                    onCheckedChange = onToggleEnabled
+                )
+            }
+            if (enabled) {
+                Spacer(modifier = Modifier.height(10.dp))
+                HorizontalDivider()
+                Spacer(modifier = Modifier.height(10.dp))
+                ThresholdRow(
+                    label = stringResource(R.string.settings_balance_alert_threshold),
+                    value = stringResource(
+                        R.string.settings_balance_alert_threshold_value,
+                        formatThreshold(threshold)
+                    ),
+                    onEdit = onEditThreshold
+                )
+                Spacer(modifier = Modifier.height(10.dp))
+                HorizontalDivider()
+                Spacer(modifier = Modifier.height(10.dp))
+                ThresholdRow(
+                    label = stringResource(R.string.settings_balance_alert_fraction),
+                    value = stringResource(
+                        R.string.settings_balance_alert_fraction_value,
+                        formatThreshold(fractionThreshold)
+                    ),
+                    onEdit = onEditFraction
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ThresholdRow(label: String, value: String, onEdit: () -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.bodyMedium
+            )
+            Text(
+                text = value,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        TextButton(onClick = onEdit) {
+            Text(stringResource(R.string.settings_balance_alert_edit))
+        }
+    }
+}
+
+private fun formatThreshold(value: Double): String {
+    return if (value == value.toLong().toDouble()) {
+        value.toLong().toString()
+    } else {
+        String.format(Locale.US, "%.2f", value)
+    }
+}
+
+// ===== 余额预警阈值弹窗 =====
+
+@Composable
+private fun BalanceThresholdDialog(
+    currentThreshold: Double,
+    onDismiss: () -> Unit,
+    onSave: (Double) -> Unit
+) {
+    var input by remember { mutableStateOf(formatThreshold(currentThreshold)) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                text = stringResource(R.string.balance_threshold_dialog_title),
+                style = MaterialTheme.typography.titleMedium
+            )
+        },
+        text = {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    text = stringResource(R.string.balance_threshold_dialog_desc),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = input,
+                    onValueChange = { input = it },
+                    label = { Text(stringResource(R.string.balance_threshold_label)) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { input.toDoubleOrNull()?.let(onSave) },
+                enabled = input.toDoubleOrNull()?.let { it >= 0.0 } == true
+            ) {
+                Text(stringResource(R.string.action_save))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(stringResource(R.string.action_cancel))
+            }
+        }
+    )
+}
+
+// ===== 余额预警比例阈值弹窗 =====
+
+@Composable
+private fun BalanceFractionDialog(
+    currentFraction: Double,
+    onDismiss: () -> Unit,
+    onSave: (Double) -> Unit
+) {
+    var input by remember { mutableStateOf(formatThreshold(currentFraction)) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                text = stringResource(R.string.balance_fraction_dialog_title),
+                style = MaterialTheme.typography.titleMedium
+            )
+        },
+        text = {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    text = stringResource(R.string.balance_fraction_dialog_desc),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = input,
+                    onValueChange = { input = it },
+                    label = { Text(stringResource(R.string.balance_fraction_label)) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { input.toDoubleOrNull()?.let(onSave) },
+                enabled = input.toDoubleOrNull()?.let { it in 0.0..100.0 } == true
+            ) {
+                Text(stringResource(R.string.action_save))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(stringResource(R.string.action_cancel))
+            }
+        }
+    )
+}
+
 // ===== 火山方舟初始余额弹窗 =====
 
 @Composable
@@ -450,7 +744,11 @@ private val previewUiState = SettingsUiState(
         PlatformSettingsState(PlatformType.KIMI_CODE)
     ),
     autoRefreshInterval = 5,
-    themeMode = "system"
+    themeMode = "system",
+    encryptionDegraded = true,
+    balanceAlertEnabled = true,
+    balanceAlertThreshold = 10.0,
+    balanceAlertFractionThreshold = 20.0
 )
 
 @Composable
@@ -462,7 +760,10 @@ private fun SettingsPreviewContent() {
         onPlatformClick = {},
         onIntervalChange = {},
         onThemeModeChange = {},
-        onEditInitialBalance = {}
+        onEditInitialBalance = {},
+        onToggleBalanceAlert = {},
+        onEditBalanceThreshold = {},
+        onEditBalanceFraction = {}
     )
 }
 

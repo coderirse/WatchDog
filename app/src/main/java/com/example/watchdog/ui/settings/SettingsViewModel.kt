@@ -25,8 +25,14 @@ data class SettingsUiState(
     },
     val autoRefreshInterval: Int = 5,
     val themeMode: String = "system",
+    val encryptionDegraded: Boolean = false,
+    val balanceAlertEnabled: Boolean = false,
+    val balanceAlertThreshold: Double = 10.0,
+    val balanceAlertFractionThreshold: Double = 20.0,
     val showApiKeyDialog: PlatformType? = null,
-    val showInitialBalanceDialog: Boolean = false
+    val showInitialBalanceDialog: Boolean = false,
+    val showBalanceThresholdDialog: Boolean = false,
+    val showBalanceFractionDialog: Boolean = false
 )
 
 class SettingsViewModel(
@@ -58,7 +64,11 @@ class SettingsViewModel(
             _uiState.value = _uiState.value.copy(
                 platforms = platforms,
                 autoRefreshInterval = interval,
-                themeMode = appContainer.themeMode.value
+                themeMode = appContainer.themeMode.value,
+                encryptionDegraded = settingsStore.isEncryptionDegraded(),
+                balanceAlertEnabled = settingsStore.isBalanceAlertEnabled(),
+                balanceAlertThreshold = settingsStore.getBalanceAlertThreshold(),
+                balanceAlertFractionThreshold = settingsStore.getBalanceAlertFraction()
             )
         }
     }
@@ -126,6 +136,45 @@ class SettingsViewModel(
             dismissInitialBalanceDialog()
             loadSettings()
         }
+    }
+
+    // ===== 余额低水位预警 =====
+
+    fun toggleBalanceAlert(enabled: Boolean) {
+        viewModelScope.launch {
+            settingsStore.saveBalanceAlertEnabled(enabled)
+            _uiState.value = _uiState.value.copy(balanceAlertEnabled = enabled)
+        }
+    }
+
+    fun updateBalanceAlertThreshold(threshold: Double) {
+        viewModelScope.launch {
+            settingsStore.saveBalanceAlertThreshold(threshold)
+            _uiState.value = _uiState.value.copy(balanceAlertThreshold = threshold)
+        }
+    }
+
+    fun showBalanceThresholdDialog() {
+        _uiState.value = _uiState.value.copy(showBalanceThresholdDialog = true)
+    }
+
+    fun dismissBalanceThresholdDialog() {
+        _uiState.value = _uiState.value.copy(showBalanceThresholdDialog = false)
+    }
+
+    fun updateBalanceAlertFraction(percent: Double) {
+        viewModelScope.launch {
+            settingsStore.saveBalanceAlertFraction(percent)
+            _uiState.value = _uiState.value.copy(balanceAlertFractionThreshold = percent)
+        }
+    }
+
+    fun showBalanceFractionDialog() {
+        _uiState.value = _uiState.value.copy(showBalanceFractionDialog = true)
+    }
+
+    fun dismissBalanceFractionDialog() {
+        _uiState.value = _uiState.value.copy(showBalanceFractionDialog = false)
     }
 
     companion object {

@@ -9,6 +9,8 @@ import com.example.watchdog.data.api.GlmApi
 import com.example.watchdog.data.api.KimiApi
 import com.example.watchdog.data.api.KimiCodeApi
 import com.example.watchdog.data.api.SiliconFlowApi
+import com.example.watchdog.data.local.BalanceAlertManager
+import com.example.watchdog.data.local.BalanceHistoryStore
 import com.example.watchdog.data.local.QuotaCacheStore
 import com.example.watchdog.data.local.SettingsStore
 import com.example.watchdog.data.repository.QuotaRepository
@@ -59,10 +61,9 @@ class AppContainer(context: Context) {
     // SettingsStore (需要Context)
     val settingsStore: SettingsStore = SettingsStore(context.applicationContext)
 
-    // 主题模式（Compose 状态）：设置页修改后 MainActivity 读取该状态即时重组生效
-    private val _themeMode = mutableStateOf(
-        kotlinx.coroutines.runBlocking { settingsStore.getThemeMode() }
-    )
+    // 主题模式（Compose 状态）：设置页修改后 MainActivity 读取该状态即时重组生效。
+    // 初始值用同步读取，避免在 Application.onCreate 主线程上用 runBlocking 阻塞。
+    private val _themeMode = mutableStateOf(settingsStore.getThemeModeSync())
     val themeMode: State<String> = _themeMode
 
     /** 保存并立即应用主题模式："system" / "light" / "dark" */
@@ -84,4 +85,13 @@ class AppContainer(context: Context) {
         siliconFlowApi = siliconFlowApi,
         kimiCodeApi = kimiCodeApi
     )
+
+    // 余额低水位预警
+    val balanceAlertManager: BalanceAlertManager = BalanceAlertManager(
+        context = context.applicationContext,
+        settingsStore = settingsStore
+    )
+
+    // 余额历史快照（趋势图）
+    val balanceHistoryStore: BalanceHistoryStore = BalanceHistoryStore(context.applicationContext)
 }

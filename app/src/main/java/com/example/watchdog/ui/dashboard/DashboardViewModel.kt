@@ -4,9 +4,13 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.watchdog.di.AppContainer
+import com.example.watchdog.data.local.BalanceAlertManager
+import com.example.watchdog.data.local.BalanceHistoryStore
 import com.example.watchdog.data.local.SettingsStore
+import com.example.watchdog.data.model.BalanceSnapshot
 import com.example.watchdog.data.model.PlatformType
 import com.example.watchdog.data.model.QuotaState
+import com.example.watchdog.data.model.sumCnyBalance
 import com.example.watchdog.data.repository.QuotaRepository
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -17,11 +21,16 @@ import kotlinx.coroutines.launch
 
 class DashboardViewModel(
     private val quotaRepository: QuotaRepository,
-    private val settingsStore: SettingsStore
+    private val settingsStore: SettingsStore,
+    private val balanceAlertManager: BalanceAlertManager,
+    private val balanceHistoryStore: BalanceHistoryStore
 ) : ViewModel() {
 
     private val _quotaState = MutableStateFlow<QuotaState>(QuotaState.Loading)
     val quotaState: StateFlow<QuotaState> = _quotaState.asStateFlow()
+
+    private val _balanceHistory = MutableStateFlow<List<BalanceSnapshot>>(emptyList())
+    val balanceHistory: StateFlow<List<BalanceSnapshot>> = _balanceHistory.asStateFlow()
 
     private val _isRefreshing = MutableStateFlow(false)
     val isRefreshing: StateFlow<Boolean> = _isRefreshing.asStateFlow()
@@ -37,6 +46,7 @@ class DashboardViewModel(
 
     init {
         refresh()
+        loadHistory()
     }
 
     fun refresh() {
@@ -52,6 +62,26 @@ class DashboardViewModel(
 
             try {
                 val quotas = quotaRepository.fetchAllQuotas()
+                // 刷新后评估余额低水位，对"新进入"预警状态的平台发送本地通知；
+                // 通知评估/发送失败不应影响仪表盘展示，故单独隔离
+                try {
+                    balanceAlertManager.evaluate(quotas)
+                } catch (_: Exception) {
+                    // 忽略通知异常
+                }
+                // 记录余额历史快照：仅当本次 CNY 平台全部成功获取时记录，
+                // 避免断网/部分失败导致趋势图出现假性波动
+                try {
+                    val cnyQuotas = quotas.filter { it.isConfigured && it.currency == "CNY" }
+                    if (cnyQuotas.isNotEmpty() &&
+                        cnyQuotas.all { it.errorMessage == null && !it.isStale }
+                    ) {
+                        balanceHistoryStore.record(quotas.sumCnyBalance(freshOnly = true))
+                        _balanceHistory.value = balanceHistoryStore.load()
+                    }
+                } catch (_: Exception) {
+                    // 忽略历史记录异常
+                }
                 val configuredQuotas = quotas.filter { it.isConfigured }
                 val failedPlatforms = configuredQuotas
                     .filter { it.errorMessage != null }
@@ -98,6 +128,12 @@ class DashboardViewModel(
         }
     }
 
+    fun loadHistory() {
+        viewModelScope.launch {
+            _balanceHistory.value = balanceHistoryStore.load()
+        }
+    }
+
     fun stopAutoRefresh() {
         autoRefreshJob?.cancel()
     }
@@ -113,7 +149,9 @@ class DashboardViewModel(
             override fun <T : ViewModel> create(modelClass: Class<T>): T {
                 return DashboardViewModel(
                     quotaRepository = container.quotaRepository,
-                    settingsStore = container.settingsStore
+                    settingsStore = container.settingsStore,
+                    balanceAlertManager = container.balanceAlertManager,
+                    balanceHistoryStore = container.balanceHistoryStore
                 ) as T
             }
         }

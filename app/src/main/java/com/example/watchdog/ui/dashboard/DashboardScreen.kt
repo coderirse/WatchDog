@@ -54,9 +54,12 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.watchdog.R
 import com.example.watchdog.di.LocalAppContainer
+import com.example.watchdog.data.model.BalanceSnapshot
 import com.example.watchdog.data.model.PlatformType
 import com.example.watchdog.data.model.QuotaInfo
 import com.example.watchdog.data.model.QuotaState
+import com.example.watchdog.data.model.sumCnyBalance
+import com.example.watchdog.ui.components.BalanceTrendCard
 import com.example.watchdog.ui.components.PlatformQuotaCard
 import com.example.watchdog.ui.theme.WatchDogTheme
 import com.example.watchdog.ui.theme.balanceNumeral
@@ -77,6 +80,7 @@ fun DashboardScreen(
     val isRefreshing by viewModel.isRefreshing.collectAsState()
     val isOffline by viewModel.isOffline.collectAsState()
     val autoRefreshInterval by viewModel.autoRefreshInterval.collectAsState()
+    val balanceHistory by viewModel.balanceHistory.collectAsState()
     val lifecycleOwner = LocalLifecycleOwner.current
 
     // 仅当仪表盘可见且应用处于前台时自动刷新：离开页面或退到后台即停止
@@ -102,6 +106,7 @@ fun DashboardScreen(
         isRefreshing = isRefreshing,
         isOffline = isOffline,
         autoRefreshInterval = autoRefreshInterval,
+        balanceHistory = balanceHistory,
         onRefresh = { viewModel.refresh() },
         onNavigateToSettings = onNavigateToSettings
     )
@@ -114,6 +119,7 @@ fun DashboardContent(
     isRefreshing: Boolean,
     isOffline: Boolean,
     autoRefreshInterval: Int,
+    balanceHistory: List<BalanceSnapshot>,
     onRefresh: () -> Unit,
     onNavigateToSettings: () -> Unit
 ) {
@@ -162,12 +168,14 @@ fun DashboardContent(
                     quotas = state.quotas,
                     autoRefreshInterval = autoRefreshInterval,
                     showOfflineBanner = isOffline,
+                    balanceHistory = balanceHistory,
                     onNavigateToSettings = onNavigateToSettings
                 )
                 is QuotaState.PartialSuccess -> QuotaListOrEmpty(
                     quotas = state.quotas,
                     autoRefreshInterval = autoRefreshInterval,
                     showOfflineBanner = isOffline,
+                    balanceHistory = balanceHistory,
                     onNavigateToSettings = onNavigateToSettings
                 )
                 is QuotaState.Error -> ErrorContent(state.message)
@@ -190,10 +198,9 @@ fun HeroOverviewCard(quotas: List<QuotaInfo>, modifier: Modifier = Modifier) {
     val configured = quotas.filter { it.isConfigured }
     val normalCount = configured.count { it.errorMessage == null }
     val abnormalCount = configured.size - normalCount
-    // 金额汇总：仅计按量付费平台，订阅配额平台无余额概念
-    val totalBalance = configured
-        .filter { it.errorMessage == null && !it.isSubscriptionMode }
-        .sumOf { it.totalBalance.toDoubleOrNull() ?: 0.0 }
+    // 金额汇总：仅计按量付费且以 CNY 计价的平台；
+    // 订阅配额平台无余额概念，GLM 等以 Token 计价的平台不能混入金额求和
+    val totalBalance = quotas.sumCnyBalance()
     val hasSubscription = configured.any { it.isSubscriptionMode }
     val lastRefresh = configured.maxOfOrNull { it.lastUpdated }
 
@@ -268,6 +275,7 @@ private fun QuotaListOrEmpty(
     quotas: List<QuotaInfo>,
     autoRefreshInterval: Int,
     showOfflineBanner: Boolean,
+    balanceHistory: List<BalanceSnapshot>,
     onNavigateToSettings: () -> Unit
 ) {
     if (quotas.none { it.isConfigured }) {
@@ -286,6 +294,10 @@ private fun QuotaListOrEmpty(
 
         item(key = "hero_overview") {
             HeroOverviewCard(quotas = quotas)
+        }
+
+        item(key = "balance_trend") {
+            BalanceTrendCard(history = balanceHistory)
         }
 
         items(quotas, key = { it.platform.name }) { quota ->
@@ -451,6 +463,7 @@ private fun DashboardPreviewContent() {
         isRefreshing = false,
         isOffline = false,
         autoRefreshInterval = 5,
+        balanceHistory = emptyList(),
         onRefresh = {},
         onNavigateToSettings = {}
     )

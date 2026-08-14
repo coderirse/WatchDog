@@ -50,6 +50,7 @@ import com.example.watchdog.ui.theme.depletedBrush
 import com.example.watchdog.ui.theme.onBrand
 import com.example.watchdog.ui.theme.onBrandSecondary
 import com.example.watchdog.ui.theme.warningBlendBrush
+import com.example.watchdog.util.FormatUtils
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -206,9 +207,9 @@ private fun StatusPill(text: String) {
 /** 余额占比（0~1）：订阅模式取最低窗口剩余占比；GLM 等有限额的按 剩余/总量；无限额平台为 null */
 private fun remainingFraction(q: QuotaInfo): Float? {
     q.lowestRemainingFraction?.let { return it.toFloat() }
-    val limit = parseTokenNumber(q.monthlyLimit)
+    val limit = FormatUtils.parseTokenNumber(q.monthlyLimit)
     if (limit > 0) {
-        val remaining = parseTokenNumber(q.totalBalance)
+        val remaining = FormatUtils.parseTokenNumber(q.totalBalance)
         return (remaining.toFloat() / limit).coerceIn(0f, 1f)
     }
     return null
@@ -225,6 +226,12 @@ private fun BalanceContent(q: QuotaInfo, fraction: Float?) {
         PlatformType.GLM -> stringResource(R.string.quota_label_total_used)
         PlatformType.SILICONFLOW -> stringResource(R.string.quota_label_available_balance)
         else -> stringResource(R.string.quota_label_monthly_usage)
+    }
+    // 硅基流动展示专用 availableBalance 字段，不再复用 monthlyUsage 造成语义错位
+    val secondaryValue = if (q.platform == PlatformType.SILICONFLOW) {
+        q.availableBalance ?: q.monthlyUsage
+    } else {
+        q.monthlyUsage
     }
 
     Text(balanceLabel, style = MaterialTheme.typography.labelMedium, color = onBrandSecondary)
@@ -256,7 +263,7 @@ private fun BalanceContent(q: QuotaInfo, fraction: Float?) {
     Spacer(modifier = Modifier.height(10.dp))
     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
         Text(secondaryLabel, style = MaterialTheme.typography.bodySmall, color = onBrandSecondary)
-        Text("${q.monthlyUsage} ${q.currency}", style = MaterialTheme.typography.bodySmall, color = onBrand)
+        Text("$secondaryValue ${q.currency}", style = MaterialTheme.typography.bodySmall, color = onBrand)
     }
 }
 
@@ -377,8 +384,8 @@ private fun ModelUsageSection(q: QuotaInfo) {
             Text(
                 text = stringResource(
                     R.string.quota_usage_summary,
-                    formatNumber(q.totalRequestCount),
-                    formatNumber(q.totalTokensUsed)
+                    FormatUtils.formatNumber(q.totalRequestCount),
+                    FormatUtils.formatNumber(q.totalTokensUsed)
                 ),
                 style = MaterialTheme.typography.labelSmall,
                 color = onBrandSecondary
@@ -428,7 +435,7 @@ private fun ModelUsageRow(mu: ModelUsage, maxTokens: Long) {
             )
             Spacer(modifier = Modifier.width(8.dp))
             Text(
-                stringResource(R.string.quota_model_row_label, formatNumber(mu.totalTokens), mu.requestCount),
+                stringResource(R.string.quota_model_row_label, FormatUtils.formatNumber(mu.totalTokens), mu.requestCount),
                 style = MaterialTheme.typography.labelSmall,
                 color = onBrandSecondary
             )
@@ -473,26 +480,10 @@ private fun ModelUsageEmptyHint(platform: PlatformType) {
 
 // ===== 工具函数 =====
 
-private fun parseTokenNumber(f: String): Long = try {
-    when {
-        f.endsWith("B", true) -> (f.dropLast(1).toDouble() * 1_000_000_000).toLong()
-        f.endsWith("M", true) -> (f.dropLast(1).toDouble() * 1_000_000).toLong()
-        f.endsWith("K", true) -> (f.dropLast(1).toDouble() * 1_000).toLong()
-        else -> f.toLongOrNull() ?: 0L
-    }
-} catch (_: Exception) { 0L }
-
-private fun formatNumber(n: Long): String = when {
-    n >= 1_000_000_000 -> String.format("%.1fB", n / 1_000_000_000.0)
-    n >= 1_000_000 -> String.format("%.1fM", n / 1_000_000.0)
-    n >= 1_000 -> String.format("%.1fK", n / 1_000.0)
-    else -> n.toString()
-}
-
 /** 订阅窗口数值格式化：大数值缩写，小数值去掉多余小数，未知显示 "-" */
 private fun formatQuotaNumber(value: Double?): String {
     if (value == null) return "-"
-    if (value >= 1000) return formatNumber(value.toLong())
+    if (value >= 1000) return FormatUtils.formatNumber(value.toLong())
     return if (value == floor(value)) String.format("%.0f", value) else String.format("%.2f", value)
 }
 

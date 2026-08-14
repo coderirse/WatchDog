@@ -31,6 +31,13 @@
     <string name="hero_platform_stats">%1$d 个平台 · %2$d 正常 %3$d 异常</string>
     <string name="hero_last_refresh">上次刷新 %1$s</string>
 
+    <!-- 余额趋势 -->
+    <string name="trend_title">余额趋势</string>
+    <string name="trend_empty">至少需要两次余额变化才会显示趋势</string>
+    <string name="trend_latest">最近 ¥%1$s</string>
+    <string name="trend_min">最低 ¥%1$s</string>
+    <string name="trend_max">最高 ¥%1$s</string>
+
     <!-- 额度卡片 -->
     <string name="status_normal">正常</string>
     <string name="status_low">偏低</string>
@@ -87,6 +94,29 @@
     <string name="settings_refresh_interval">自动刷新间隔</string>
     <string name="settings_interval_minutes">%1$d分钟</string>
     <string name="settings_interval_selected">● %1$d分钟</string>
+
+    <!-- 加密降级告警 -->
+    <string name="settings_encryption_degraded">设备安全存储不可用，API Key 将以明文保存，请注意安全</string>
+
+    <!-- 余额预警 -->
+    <string name="settings_balance_alert_title">余额预警</string>
+    <string name="settings_balance_alert_desc">余额或剩余配额低于阈值时发送通知提醒</string>
+    <string name="settings_balance_alert_threshold">余额阈值</string>
+    <string name="settings_balance_alert_threshold_value">¥ %1$s</string>
+    <string name="settings_balance_alert_fraction">比例阈值</string>
+    <string name="settings_balance_alert_fraction_value">%1$s%%</string>
+    <string name="settings_balance_alert_edit">修改</string>
+    <string name="balance_fraction_dialog_title">设置比例阈值</string>
+    <string name="balance_fraction_dialog_desc">当订阅或 Token 平台的剩余配额占比低于此比例时发送通知</string>
+    <string name="balance_fraction_label">比例（%）</string>
+    <string name="balance_alert_title">WatchDog 余额预警</string>
+    <string name="balance_alert_low">余额偏低</string>
+    <string name="balance_alert_depleted">已耗尽</string>
+    <string name="balance_alert_channel_name">余额预警</string>
+    <string name="balance_alert_channel_desc">当 AI 平台余额偏低或耗尽时提醒</string>
+    <string name="balance_threshold_dialog_title">设置预警阈值</string>
+    <string name="balance_threshold_dialog_desc">当某平台的余额低于此金额（元）时发送通知</string>
+    <string name="balance_threshold_label">阈值（元）</string>
 
     <!-- API Key 弹窗 -->
     <string name="apikey_dialog_title">配置 %1$s API Key</string>

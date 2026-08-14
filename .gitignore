@@ -10,6 +10,8 @@
 .cxx
 local.properties
 /keystore.properties
+/.uploads/
+/releases/
 /app/build
 /app/release
 *.apk

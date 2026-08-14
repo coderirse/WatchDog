@@ -40,6 +40,8 @@ data class QuotaInfo(
     val monthlyUsage: String = "0",
     val monthlyLimit: String = "0",
     val currency: String = "CNY",
+    // 可用余额（区分可用/总余额的平台，如硅基流动）；其余平台保持 null
+    val availableBalance: String? = null,
     val errorMessage: String? = null,
     val modelUsages: List<ModelUsage> = emptyList(),  // 按模型用量明细
     val lastUpdated: Long = System.currentTimeMillis(),
@@ -99,3 +101,14 @@ sealed class QuotaState {
     ) : QuotaState()
     data class Error(val message: String) : QuotaState()
 }
+
+/**
+ * 汇总已配置、无异常、非订阅且以 CNY 计价的平台总余额。
+ * [freshOnly] 为 true 时仅统计本次成功获取（非离线缓存 isStale）的数据。
+ * Token 计价平台（GLM）与订阅配额平台（Kimi Code）不参与金额汇总。
+ */
+fun List<QuotaInfo>.sumCnyBalance(freshOnly: Boolean = false): Double =
+    filter {
+        it.isConfigured && it.errorMessage == null && !it.isSubscriptionMode &&
+            it.currency == "CNY" && (!freshOnly || !it.isStale)
+    }.sumOf { it.totalBalance.toDoubleOrNull() ?: 0.0 }
