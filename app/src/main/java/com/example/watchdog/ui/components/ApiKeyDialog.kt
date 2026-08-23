@@ -9,6 +9,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -30,11 +31,24 @@ import com.example.watchdog.data.model.PlatformType
 fun ApiKeyDialog(
     platform: PlatformType,
     currentApiKey: String = "",
+    sessionConfigured: Boolean = false,
     onDismiss: () -> Unit,
     onSave: (platform: PlatformType, apiKey: String) -> Unit,
+    onSaveWebSession: (platform: PlatformType, token: String) -> Unit,
+    onOpenWebLogin: (platform: PlatformType) -> Unit = {},
     onDelete: (platform: PlatformType) -> Unit
 ) {
     var apiKeyInput by remember { mutableStateOf(currentApiKey) }
+    var sessionInput by remember { mutableStateOf("") }
+
+    fun submit() {
+        if (apiKeyInput.isNotBlank()) {
+            onSave(platform, apiKeyInput.trim())
+            if (platform.supportsConsoleSession && sessionInput.isNotBlank()) {
+                onSaveWebSession(platform, sessionInput.trim())
+            }
+        }
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -67,14 +81,10 @@ fun ApiKeyDialog(
                     visualTransformation = PasswordVisualTransformation(),
                     keyboardOptions = KeyboardOptions(
                         keyboardType = KeyboardType.Password,
-                        imeAction = ImeAction.Done
+                        imeAction = if (platform.supportsConsoleSession) ImeAction.Next else ImeAction.Done
                     ),
                     keyboardActions = KeyboardActions(
-                        onDone = {
-                            if (apiKeyInput.isNotBlank()) {
-                                onSave(platform, apiKeyInput.trim())
-                            }
-                        }
+                        onDone = { submit() }
                     )
                 )
                 if (currentApiKey.isNotEmpty()) {
@@ -85,15 +95,60 @@ fun ApiKeyDialog(
                         color = MaterialTheme.colorScheme.outline
                     )
                 }
+
+                // 支持网页控制台会话的平台（小米 MiMo 必需 / DeepSeek 可选增强）：
+                // 推荐通过内嵌登录页获取会话（支持密码/短信验证码登录，凭证自动抓取加密保存）；
+                // 手动粘贴令牌作为备选。
+                if (platform.supportsConsoleSession) {
+                    val sessionDesc = when (platform) {
+                        PlatformType.MIMO ->
+                            stringResource(R.string.apikey_dialog_session_desc_mimo, platform.displayName)
+                        PlatformType.DEEPSEEK ->
+                            stringResource(R.string.apikey_dialog_session_desc_deepseek, platform.displayName)
+                        else -> ""
+                    }
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(
+                        text = sessionDesc,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedButton(
+                        onClick = { onOpenWebLogin(platform) },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(stringResource(R.string.apikey_dialog_open_weblogin, platform.displayName))
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = sessionInput,
+                        onValueChange = { sessionInput = it },
+                        label = { Text(stringResource(R.string.apikey_dialog_session_label)) },
+                        placeholder = { Text(stringResource(R.string.apikey_dialog_session_placeholder)) },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                        visualTransformation = PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(
+                            keyboardType = KeyboardType.Password,
+                            imeAction = ImeAction.Done
+                        ),
+                        keyboardActions = KeyboardActions(onDone = { submit() })
+                    )
+                    if (sessionConfigured) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = stringResource(R.string.apikey_dialog_session_current),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.outline
+                        )
+                    }
+                }
             }
         },
         confirmButton = {
             TextButton(
-                onClick = {
-                    if (apiKeyInput.isNotBlank()) {
-                        onSave(platform, apiKeyInput.trim())
-                    }
-                },
+                onClick = { submit() },
                 enabled = apiKeyInput.isNotBlank()
             ) {
                 Text(stringResource(R.string.action_save))

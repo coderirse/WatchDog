@@ -10,6 +10,7 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -36,10 +37,26 @@ data class BottomNavItem(
 )
 
 @Composable
-fun WatchDogNavGraph() {
+fun WatchDogNavGraph(
+    gotoDashboardSignal: Boolean = false,
+    onGotoDashboardConsumed: () -> Unit = {}
+) {
     val navController = rememberNavController()
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
+
+    // 网页登录成功跳回（CLEAR_TOP 回 MainActivity）后：无论当时停在哪个页面，
+    // 都导航回仪表盘，由 Dashboard 重新可见时的刷新展示最新数据
+    LaunchedEffect(gotoDashboardSignal) {
+        if (gotoDashboardSignal) {
+            navController.navigate(Routes.DASHBOARD) {
+                popUpTo(navController.graph.findStartDestination().id) { saveState = true }
+                launchSingleTop = true
+                restoreState = true
+            }
+            onGotoDashboardConsumed()
+        }
+    }
 
     val bottomItems = listOf(
         BottomNavItem(Routes.DASHBOARD, stringResource(R.string.nav_quota), Icons.Filled.Home),

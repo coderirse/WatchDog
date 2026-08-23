@@ -1,6 +1,8 @@
 package com.example.watchdog.ui.dashboard
 
 import android.content.res.Configuration
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -65,6 +67,8 @@ import com.example.watchdog.ui.theme.WatchDogTheme
 import com.example.watchdog.ui.theme.balanceNumeral
 import com.example.watchdog.ui.theme.onBrand
 import com.example.watchdog.ui.theme.onBrandSecondary
+import com.example.watchdog.ui.weblogin.WebLoginActivity
+import androidx.compose.ui.platform.LocalContext
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -82,14 +86,27 @@ fun DashboardScreen(
     val autoRefreshInterval by viewModel.autoRefreshInterval.collectAsState()
     val balanceHistory by viewModel.balanceHistory.collectAsState()
     val lifecycleOwner = LocalLifecycleOwner.current
+    val context = LocalContext.current
 
-    // 仅当仪表盘可见且应用处于前台时自动刷新：离开页面或退到后台即停止
+    // 从内嵌登录页返回（会话已保存）后立即刷新数据
+    val reloginLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == android.app.Activity.RESULT_OK) viewModel.refresh()
+    }
+
+    // 仅当仪表盘可见且应用处于前台时自动刷新：离开页面或退到后台即停止；
+    // 仪表盘重新可见（导航返回/网页登录后跳回/回到前台）立即刷新一次
     DisposableEffect(lifecycleOwner) {
+        viewModel.refresh()
         viewModel.loadAutoRefreshInterval()
         viewModel.startAutoRefresh()
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
-                Lifecycle.Event.ON_RESUME -> viewModel.startAutoRefresh()
+                Lifecycle.Event.ON_RESUME -> {
+                    viewModel.refresh()
+                    viewModel.startAutoRefresh()
+                }
                 Lifecycle.Event.ON_PAUSE -> viewModel.stopAutoRefresh()
                 else -> Unit
             }
@@ -108,7 +125,10 @@ fun DashboardScreen(
         autoRefreshInterval = autoRefreshInterval,
         balanceHistory = balanceHistory,
         onRefresh = { viewModel.refresh() },
-        onNavigateToSettings = onNavigateToSettings
+        onNavigateToSettings = onNavigateToSettings,
+        onRelogin = { platform ->
+            reloginLauncher.launch(WebLoginActivity.intent(context, platform))
+        }
     )
 }
 
@@ -121,7 +141,8 @@ fun DashboardContent(
     autoRefreshInterval: Int,
     balanceHistory: List<BalanceSnapshot>,
     onRefresh: () -> Unit,
-    onNavigateToSettings: () -> Unit
+    onNavigateToSettings: () -> Unit,
+    onRelogin: (PlatformType) -> Unit = {}
 ) {
     Scaffold(
         topBar = {
@@ -169,14 +190,16 @@ fun DashboardContent(
                     autoRefreshInterval = autoRefreshInterval,
                     showOfflineBanner = isOffline,
                     balanceHistory = balanceHistory,
-                    onNavigateToSettings = onNavigateToSettings
+                    onNavigateToSettings = onNavigateToSettings,
+                    onRelogin = onRelogin
                 )
                 is QuotaState.PartialSuccess -> QuotaListOrEmpty(
                     quotas = state.quotas,
                     autoRefreshInterval = autoRefreshInterval,
                     showOfflineBanner = isOffline,
                     balanceHistory = balanceHistory,
-                    onNavigateToSettings = onNavigateToSettings
+                    onNavigateToSettings = onNavigateToSettings,
+                    onRelogin = onRelogin
                 )
                 is QuotaState.Error -> ErrorContent(state.message)
             }
@@ -276,7 +299,8 @@ private fun QuotaListOrEmpty(
     autoRefreshInterval: Int,
     showOfflineBanner: Boolean,
     balanceHistory: List<BalanceSnapshot>,
-    onNavigateToSettings: () -> Unit
+    onNavigateToSettings: () -> Unit,
+    onRelogin: (PlatformType) -> Unit = {}
 ) {
     if (quotas.none { it.isConfigured }) {
         EmptyContent(onNavigateToSettings)
@@ -301,7 +325,7 @@ private fun QuotaListOrEmpty(
         }
 
         items(quotas, key = { it.platform.name }) { quota ->
-            PlatformQuotaCard(quotaInfo = quota)
+            PlatformQuotaCard(quotaInfo = quota, onRelogin = onRelogin)
         }
 
         item {

@@ -59,18 +59,26 @@ import kotlin.math.floor
 private val onBrandDivider = onBrand.copy(alpha = 0.24f)
 
 @Composable
-fun PlatformQuotaCard(quotaInfo: QuotaInfo, modifier: Modifier = Modifier) {
+fun PlatformQuotaCard(
+    quotaInfo: QuotaInfo,
+    modifier: Modifier = Modifier,
+    onRelogin: ((PlatformType) -> Unit)? = null
+) {
     if (quotaInfo.isConfigured && quotaInfo.errorMessage == null) {
         BrandQuotaCard(quotaInfo, modifier)
     } else {
-        NeutralQuotaCard(quotaInfo, modifier)
+        NeutralQuotaCard(quotaInfo, modifier, onRelogin)
     }
 }
 
 // ===== 中性卡：未配置 / 查询异常 =====
 
 @Composable
-private fun NeutralQuotaCard(q: QuotaInfo, modifier: Modifier = Modifier) {
+private fun NeutralQuotaCard(
+    q: QuotaInfo,
+    modifier: Modifier = Modifier,
+    onRelogin: ((PlatformType) -> Unit)? = null
+) {
     Card(
         modifier = modifier.fillMaxWidth().animateContentSize(),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
@@ -106,6 +114,13 @@ private fun NeutralQuotaCard(q: QuotaInfo, modifier: Modifier = Modifier) {
                 color = if (q.errorMessage != null) MaterialTheme.colorScheme.error
                 else MaterialTheme.colorScheme.onSurfaceVariant
             )
+            // 会话失效且保存了账密：一键拉起内嵌登录页自动重新登录
+            if (q.needsRelogin && onRelogin != null) {
+                Spacer(modifier = Modifier.height(10.dp))
+                androidx.compose.material3.Button(onClick = { onRelogin(q.platform) }) {
+                    Text(stringResource(R.string.quota_relogin_button))
+                }
+            }
         }
     }
 }
@@ -162,6 +177,11 @@ private fun BrandQuotaCard(q: QuotaInfo, modifier: Modifier = Modifier) {
                         Spacer(modifier = Modifier.width(6.dp))
                         StatusPill(stringResource(R.string.status_cached))
                     }
+                    // 数据来源标记（网页控制台等非官方接口数据）
+                    q.dataSourceLabel?.let { source ->
+                        Spacer(modifier = Modifier.width(6.dp))
+                        StatusPill(source)
+                    }
                 }
                 Spacer(modifier = Modifier.height(14.dp))
 
@@ -176,9 +196,19 @@ private fun BrandQuotaCard(q: QuotaInfo, modifier: Modifier = Modifier) {
                 HorizontalDivider(color = onBrandDivider)
                 ModelUsageSection(q)
 
+                // 控制台抓取失败诊断（已配置会话但数据回退官方接口时提示失败原因）
+                q.consoleDiag?.let { diag ->
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = diag,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = onBrandSecondary
+                    )
+                }
+
                 Spacer(modifier = Modifier.height(10.dp))
                 Text(
-                    stringResource(R.string.quota_updated_at, formatTime(q.lastUpdated)),
+                    text = stringResource(R.string.quota_updated_at, formatTime(q.lastUpdated)),
                     style = MaterialTheme.typography.labelSmall,
                     color = onBrandSecondary
                 )
@@ -360,6 +390,29 @@ private fun SubscriptionContent(q: QuotaInfo) {
         Spacer(modifier = Modifier.height(2.dp))
         Text(booster, style = MaterialTheme.typography.labelSmall, color = onBrandSecondary)
     }
+
+    // 订阅模式平台若同时探测到账户余额（如 MiMo 即按量付费 + Token Plan 并存），附带展示一行
+    val accountBalance = q.totalBalance.toDoubleOrNull()
+    if (accountBalance != null && accountBalance > 0 && q.currency.equals("CNY", true)) {
+        Spacer(modifier = Modifier.height(8.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                stringResource(R.string.quota_label_account_balance),
+                style = MaterialTheme.typography.bodySmall,
+                color = onBrandSecondary
+            )
+            Text(
+                "${q.totalBalance} ${q.currency}",
+                style = MaterialTheme.typography.bodySmall,
+                color = onBrand,
+                fontWeight = FontWeight.SemiBold
+            )
+        }
+    }
 }
 
 // ===== 模型调用明细 =====
@@ -470,6 +523,7 @@ private fun ModelUsageEmptyHint(platform: PlatformType) {
         PlatformType.SILICONFLOW -> stringResource(R.string.usage_hint_siliconflow)
         PlatformType.VOLCENGINE_ARK -> stringResource(R.string.usage_hint_volcengine)
         PlatformType.KIMI_CODE -> stringResource(R.string.usage_hint_kimi_code)
+        PlatformType.MIMO -> stringResource(R.string.usage_hint_mimo)
     }
     Text(
         text = hint,
@@ -542,6 +596,21 @@ private val previewQuotaDepleted = QuotaInfo(
 
 private val previewQuotaNotConfigured = QuotaInfo.notConfigured(PlatformType.GLM)
 
+private val previewQuotaMimo = QuotaInfo(
+    platform = PlatformType.MIMO,
+    isAvailable = true,
+    isConfigured = true,
+    planName = "Pro 套餐",
+    quotaWindows = listOf(
+        QuotaWindow("月度", used = 6200.0, remaining = 3800.0, limit = 10000.0,
+            expiresAt = System.currentTimeMillis() + 18 * 86400_000L)
+    ),
+    totalBalance = "36.50",
+    currency = "CNY",
+    boosterInfo = "月度续订 · Credits 额度 10000",
+    dataSourceLabel = "网页控制台"
+)
+
 @Composable
 private fun QuotaCardPreviewContent() {
     Column(
@@ -550,6 +619,7 @@ private fun QuotaCardPreviewContent() {
     ) {
         PlatformQuotaCard(previewQuotaNormal)
         PlatformQuotaCard(previewQuotaSubscription)
+        PlatformQuotaCard(previewQuotaMimo)
         PlatformQuotaCard(previewQuotaEstimate)
         PlatformQuotaCard(previewQuotaDepleted)
         PlatformQuotaCard(previewQuotaNotConfigured)

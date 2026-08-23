@@ -50,7 +50,14 @@ data class QuotaInfo(
     val isEstimate: Boolean = false,        // true 表示余额为本地估算（如火山方舟），UI 应标注"估算"
     val planName: String? = null,           // 订阅套餐名（订阅配额模式）
     val quotaWindows: List<QuotaWindow> = emptyList(),  // 订阅配额窗口（订阅配额模式）
-    val boosterInfo: String? = null         // booster 描述（订阅配额模式）
+    val boosterInfo: String? = null,        // booster 描述（订阅配额模式）
+    val dataSourceLabel: String? = null,    // 数据来源说明（如"网页控制台"），非官方接口数据时展示
+    // 已配置网页会话但控制台抓取失败时的诊断信息（如"HTTP 429/429/200"），
+    // 用于区分 WAF 拦截/接口变更/会话失效，UI 在卡片底部小字展示
+    val consoleDiag: String? = null,
+    // true 表示网页会话已失效且无法后台自动重登（如 MiMo 需人工过验证码），
+    // UI 应显示"点击重新登录"入口拉起 WebView 登录页
+    val needsRelogin: Boolean = false
 ) {
     val hasModelUsage: Boolean get() = modelUsages.isNotEmpty()
     val totalRequestCount: Long get() = modelUsages.sumOf { it.requestCount }

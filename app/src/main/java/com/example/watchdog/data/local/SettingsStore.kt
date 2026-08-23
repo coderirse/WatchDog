@@ -2,26 +2,15 @@ package com.example.watchdog.data.local
 
 import android.content.Context
 import android.content.SharedPreferences
-import android.security.keystore.KeyGenParameterSpec
-import android.security.keystore.KeyProperties
-import android.util.Base64
 import android.util.Log
 import androidx.core.content.edit
 import com.example.watchdog.data.model.PlatformType
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import java.nio.ByteBuffer
-import java.security.KeyStore
-import javax.crypto.Cipher
-import javax.crypto.KeyGenerator
-import javax.crypto.SecretKey
-import javax.crypto.spec.GCMParameterSpec
 
 class SettingsStore(
     private val context: Context
 ) {
-    private val keyLock = Any()
-
     private val prefs: SharedPreferences
         get() = context.applicationContext.getSharedPreferences(
             "watchdog_settings",
@@ -90,6 +79,7 @@ class SettingsStore(
             // Kimi Code 与 Kimi 开放平台为独立产品，API Key 独立存储，互不复用
             PlatformType.VOLCENGINE_ARK -> "volcengine_ark_api_key"
             PlatformType.KIMI_CODE -> "kimi_code_api_key"
+            PlatformType.MIMO -> "mimo_api_key"
         }
     }
 
@@ -101,64 +91,24 @@ class SettingsStore(
             PlatformType.SILICONFLOW -> "siliconflow_enabled"
             PlatformType.VOLCENGINE_ARK -> "volcengine_ark_enabled"
             PlatformType.KIMI_CODE -> "kimi_code_enabled"
+            PlatformType.MIMO -> "mimo_enabled"
         }
     }
 
-    // ===== API Key 加密存储（Android Keystore AES-GCM） =====
+    // ===== API Key 加密存储（Android Keystore AES-GCM，实现见 SecureCipher） =====
 
     private fun encryptApiKey(plain: String): String {
-        return try {
-            val cipher = Cipher.getInstance(TRANSFORMATION)
-            cipher.init(Cipher.ENCRYPT_MODE, getOrCreateSecretKey())
-            val iv = cipher.iv
-            val encrypted = cipher.doFinal(plain.toByteArray(Charsets.UTF_8))
-            val payload = ByteBuffer.allocate(iv.size + encrypted.size)
-                .put(iv)
-                .put(encrypted)
-                .array()
-            ENCRYPTED_PREFIX + Base64.encodeToString(payload, Base64.NO_WRAP)
-        } catch (e: Exception) {
-            // Keystore 不可用时回退明文存储，避免用户被锁在门外（极少发生）。
-            // 记录告警日志 + 持久化降级标记，供设置页提示用户敏感数据当前未加密。
-            Log.w(TAG, "Android Keystore 不可用，API Key 回退为明文存储", e)
+        val encrypted = SecureCipher.encrypt(plain)
+        if (SecureCipher.lastDegraded) {
+            // Keystore 不可用时已回退明文存储，记录告警日志 + 持久化降级标记，
+            // 供设置页提示用户敏感数据当前未加密。
+            Log.w(TAG, "Android Keystore 不可用，API Key 回退为明文存储")
             markEncryptionDegraded()
-            plain
         }
+        return encrypted
     }
 
-    private fun decryptApiKey(stored: String): String? {
-        // 旧版本未加密的明文数据直接返回，下次保存时自动迁移为密文
-        if (!stored.startsWith(ENCRYPTED_PREFIX)) return stored
-        return try {
-            val raw = Base64.decode(stored.removePrefix(ENCRYPTED_PREFIX), Base64.NO_WRAP)
-            if (raw.size <= GCM_IV_LENGTH) return null
-            val iv = raw.copyOfRange(0, GCM_IV_LENGTH)
-            val ciphertext = raw.copyOfRange(GCM_IV_LENGTH, raw.size)
-            val cipher = Cipher.getInstance(TRANSFORMATION)
-            cipher.init(Cipher.DECRYPT_MODE, getOrCreateSecretKey(), GCMParameterSpec(GCM_TAG_BITS, iv))
-            String(cipher.doFinal(ciphertext), Charsets.UTF_8)
-        } catch (_: Exception) {
-            null
-        }
-    }
-
-    private fun getOrCreateSecretKey(): SecretKey = synchronized(keyLock) {
-        val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
-        (keyStore.getEntry(KEYSTORE_ALIAS, null) as? KeyStore.SecretKeyEntry)?.let { return it.secretKey }
-
-        val generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, ANDROID_KEYSTORE)
-        generator.init(
-            KeyGenParameterSpec.Builder(
-                KEYSTORE_ALIAS,
-                KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT
-            )
-                .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
-                .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
-                .setKeySize(256)
-                .build()
-        )
-        generator.generateKey()
-    }
+    private fun decryptApiKey(stored: String): String? = SecureCipher.decrypt(stored)
 
     // ===== 本月用量追踪 =====
 
@@ -210,6 +160,7 @@ class SettingsStore(
             PlatformType.SILICONFLOW -> "siliconflow"
             PlatformType.VOLCENGINE_ARK -> "volcengine_ark"
             PlatformType.KIMI_CODE -> "kimi_code"
+            PlatformType.MIMO -> "mimo"
         }
     }
 
@@ -327,12 +278,6 @@ class SettingsStore(
     }
 
     private companion object {
-        const val ANDROID_KEYSTORE = "AndroidKeyStore"
-        const val KEYSTORE_ALIAS = "watchdog_api_key"
-        const val TRANSFORMATION = "AES/GCM/NoPadding"
-        const val ENCRYPTED_PREFIX = "enc:v1:"
-        const val GCM_IV_LENGTH = 12
-        const val GCM_TAG_BITS = 128
         const val KEY_THEME_MODE = "theme_mode"
         const val THEME_MODE_SYSTEM = "system"
         val THEME_MODES = setOf("system", "light", "dark")

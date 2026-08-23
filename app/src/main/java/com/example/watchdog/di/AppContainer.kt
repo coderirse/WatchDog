@@ -5,14 +5,17 @@ import androidx.compose.runtime.State
 import androidx.compose.runtime.mutableStateOf
 import com.example.watchdog.BuildConfig
 import com.example.watchdog.data.api.DeepSeekApi
+import com.example.watchdog.data.api.DeepSeekConsoleApi
 import com.example.watchdog.data.api.GlmApi
 import com.example.watchdog.data.api.KimiApi
 import com.example.watchdog.data.api.KimiCodeApi
+import com.example.watchdog.data.api.MiMoConsoleApi
 import com.example.watchdog.data.api.SiliconFlowApi
 import com.example.watchdog.data.local.BalanceAlertManager
 import com.example.watchdog.data.local.BalanceHistoryStore
 import com.example.watchdog.data.local.QuotaCacheStore
 import com.example.watchdog.data.local.SettingsStore
+import com.example.watchdog.data.local.WebSessionStore
 import com.example.watchdog.data.repository.QuotaRepository
 import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
@@ -49,6 +52,12 @@ class AppContainer(context: Context) {
     val siliconFlowApi: SiliconFlowApi = createApi("https://api.siliconflow.cn/")
     val kimiCodeApi: KimiCodeApi = createApi("https://api.kimi.com/coding/")
 
+    // MiMo 网页控制台内部接口（非官方，鉴权头 api-platform_ph）
+    val mimoConsoleApi: MiMoConsoleApi = createApi("https://platform.xiaomimimo.com/")
+
+    // DeepSeek 网页控制台内部接口（非官方，鉴权头 Authorization: Bearer userToken + Cookie）
+    val deepSeekConsoleApi: DeepSeekConsoleApi = createApi("https://platform.deepseek.com/")
+
     private inline fun <reified T> createApi(baseUrl: String): T {
         return Retrofit.Builder()
             .baseUrl(baseUrl)
@@ -75,6 +84,9 @@ class AppContainer(context: Context) {
     // 额度缓存（断网回退用）
     val quotaCacheStore: QuotaCacheStore = QuotaCacheStore(context.applicationContext)
 
+    // 网页控制台会话凭证（爬取数据源，由 WebLoginActivity 网页登录后自动抓取）
+    val webSessionStore: WebSessionStore = WebSessionStore(context.applicationContext)
+
     // Repository
     val quotaRepository: QuotaRepository = QuotaRepository(
         settingsStore = settingsStore,
@@ -83,7 +95,10 @@ class AppContainer(context: Context) {
         kimiApi = kimiApi,
         glmApi = glmApi,
         siliconFlowApi = siliconFlowApi,
-        kimiCodeApi = kimiCodeApi
+        kimiCodeApi = kimiCodeApi,
+        mimoConsoleApi = mimoConsoleApi,
+        deepSeekConsoleApi = deepSeekConsoleApi,
+        webSessionStore = webSessionStore
     )
 
     // 余额低水位预警

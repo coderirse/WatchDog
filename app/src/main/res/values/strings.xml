@@ -60,17 +60,19 @@
     <string name="quota_window_used_remaining">已用 %1$s / 剩余 %2$s</string>
     <string name="quota_reset_at">最近重置: %1$s</string>
     <string name="quota_expires_at">最近到期: %1$s</string>
+    <string name="quota_label_account_balance">账户余额</string>
     <string name="quota_usage_details">调用明细</string>
     <string name="quota_usage_details_count">调用明细 (%1$d项)</string>
     <string name="quota_usage_summary">共 %1$s次调用  %2$s Tokens</string>
     <string name="quota_model_row_label">%1$s Tokens · %2$s次</string>
     <string name="quota_updated_at">更新: %1$s</string>
-    <string name="usage_hint_deepseek">DeepSeek 未开放用量查询接口，无法获取按模型调用明细。\n如需查看，请登录 platform.deepseek.com → Usage 页面。</string>
+    <string name="usage_hint_deepseek">DeepSeek 未开放官方用量查询接口。\n在设置中配置网页会话令牌后，可读取网页控制台的按模型调用明细（platform.deepseek.com → Usage）。</string>
     <string name="usage_hint_kimi">Kimi 未开放用量查询接口，无法获取按模型调用明细。\n如需查看，请登录 platform.moonshot.cn → 费用明细。</string>
     <string name="usage_hint_glm">GLM 资源包数据暂未解析到模型明细。\n如需查看，请登录 open.bigmodel.cn → 费用中心。</string>
     <string name="usage_hint_siliconflow">硅基流动未开放用量查询接口，无法获取按模型调用明细。\n如需查看，请登录 siliconflow.cn → 费用账单。</string>
     <string name="usage_hint_volcengine">火山方舟无余额查询接口，余额为本地估算（基于手动填写的初始余额）。\n如需准确数据，请登录火山引擎控制台 → 费用中心。</string>
     <string name="usage_hint_kimi_code">Kimi Code 为订阅配额模式，暂无按模型调用明细。\n如需查看，请登录 kimi.com → 订阅管理。</string>
+    <string name="usage_hint_mimo">MiMo 无官方用量查询接口，数据来自网页控制台（需配置会话令牌）。\n如需按模型/日期查看账单，请登录 platform.xiaomimimo.com → 账单明细。</string>
 
     <!-- 设置 -->
     <string name="settings_title">设置</string>
@@ -85,7 +87,14 @@
     <string name="settings_console_siliconflow">cloud.siliconflow.cn</string>
     <string name="settings_console_volcengine">console.volcengine.com/ark</string>
     <string name="settings_console_kimi_code">kimi.com</string>
+    <string name="settings_console_mimo">platform.xiaomimimo.com</string>
     <string name="settings_kimi_code_independent">与 Kimi 开放平台是独立产品，API Key 不通用</string>
+    <string name="settings_console_session_title">网页登录会话</string>
+    <string name="settings_console_session_edit">配置</string>
+    <string name="settings_console_session_configured">已配置 · 过期后重新打开登录页即可，登录态保留时免输账号</string>
+    <string name="settings_console_session_empty">未配置</string>
+    <string name="settings_mimo_session_desc">MiMo 无官方余额/用量 API，必须配置网页登录会话。推荐在弹窗中打开登录页，用密码或短信验证码登录后自动抓取凭证</string>
+    <string name="settings_deepseek_session_desc">可选配置。未配置时余额走官方 API + 本地估算；配置后可读取网页控制台的真实用量明细（按模型/日期）。推荐在弹窗中打开登录页自动抓取凭证</string>
     <string name="settings_ark_initial_balance_title">初始余额</string>
     <string name="settings_ark_initial_balance_value">¥ %1$s</string>
     <string name="settings_ark_initial_balance_empty">未填写</string>
@@ -123,6 +132,27 @@
     <string name="apikey_dialog_desc">请输入%1$s的API Key，它将安全地保存在本地。</string>
     <string name="apikey_dialog_placeholder">sk-xxxxxxxxxxxxxxxx</string>
     <string name="apikey_dialog_current">当前已配置API Key</string>
+    <string name="apikey_dialog_session_label">网页会话令牌（备选）</string>
+    <string name="apikey_dialog_session_placeholder">粘贴从浏览器复制的会话值</string>
+    <string name="apikey_dialog_session_desc_mimo">%1$s 无官方余额/用量 API，需网页登录会话读取控制台数据。推荐点击下方按钮打开登录页：在平台页面用密码或短信验证码登录，凭证自动抓取并加密保存（小米人机验证需手动完成）。</string>
+    <string name="apikey_dialog_session_desc_deepseek">%1$s 未开放官方用量接口，网页登录会话可读取真实用量明细（按模型/日期）。推荐点击下方按钮打开登录页，凭证自动抓取并加密保存；不配置则回退官方余额接口 + 本地估算。</string>
+    <string name="apikey_dialog_session_current">当前已配置会话令牌，留空保持不变</string>
+    <string name="apikey_dialog_open_weblogin">打开 %1$s 网页登录（推荐）</string>
+
+    <!-- 网页登录页 -->
+    <string name="weblogin_title_plain">网页登录</string>
+    <string name="weblogin_title">登录 %1$s</string>
+    <string name="weblogin_hint">在页面中用密码 / 短信验证码等方式完成登录即可，登录成功后自动返回并刷新数据；也可点击下方按钮手动读取凭证。</string>
+    <string name="weblogin_status_loading">正在加载 %1$s 登录页…</string>
+    <string name="weblogin_status_verifying">已找到凭证，正在验证有效性…</string>
+    <string name="weblogin_status_captured">凭证验证通过，正在返回…</string>
+    <string name="weblogin_done">读取凭证</string>
+    <string name="weblogin_success_toast">已保存 %1$s 会话，即将刷新数据</string>
+    <string name="weblogin_no_session_toast">尚未检测到登录凭证，请先在页面中完成登录</string>
+    <string name="weblogin_no_session_toast_host">尚未检测到登录凭证（当前页面：%1$s），请完成登录并回到平台页面</string>
+    <string name="weblogin_invalid_toast">登录凭证已失效，请在页面中重新登录后再读取</string>
+    <string name="weblogin_diag_keys">诊断 · 页面 %1$s\nlocal: %2$s\nsession: %3$s\ncookie: %4$s</string>
+    <string name="quota_relogin_button">打开网页登录，获取最新数据</string>
 
     <!-- 初始余额弹窗 -->
     <string name="initial_balance_dialog_title">设置初始余额</string>

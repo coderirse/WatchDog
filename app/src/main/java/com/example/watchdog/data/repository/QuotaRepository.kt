@@ -1,20 +1,27 @@
 package com.example.watchdog.data.repository
 
 import com.example.watchdog.data.api.DeepSeekApi
+import com.example.watchdog.data.api.DeepSeekConsoleApi
+import com.example.watchdog.data.api.DeepSeekConsoleParser
 import com.example.watchdog.data.api.GlmApi
 import com.example.watchdog.data.api.KimiApi
 import com.example.watchdog.data.api.KimiCodeApi
 import com.example.watchdog.data.api.KimiCodeParser
+import com.example.watchdog.data.api.MiMoConsoleApi
+import com.example.watchdog.data.api.MiMoConsoleParser
 import com.example.watchdog.data.api.SiliconFlowApi
 import com.example.watchdog.data.local.QuotaCacheStore
 import com.example.watchdog.data.local.SettingsStore
+import com.example.watchdog.data.local.WebSessionStore
 import com.example.watchdog.data.model.ModelUsage
 import com.example.watchdog.data.model.PlatformType
 import com.example.watchdog.data.model.QuotaInfo
 import com.example.watchdog.util.FormatUtils
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import java.util.Calendar
 import java.util.Locale
+import java.util.TimeZone
 
 class QuotaRepository(
     private val settingsStore: SettingsStore,
@@ -23,7 +30,10 @@ class QuotaRepository(
     private val kimiApi: KimiApi,
     private val glmApi: GlmApi,
     private val siliconFlowApi: SiliconFlowApi,
-    private val kimiCodeApi: KimiCodeApi
+    private val kimiCodeApi: KimiCodeApi,
+    private val mimoConsoleApi: MiMoConsoleApi,
+    private val deepSeekConsoleApi: DeepSeekConsoleApi,
+    private val webSessionStore: WebSessionStore
 ) {
     suspend fun fetchAllQuotas(): List<QuotaInfo> = coroutineScope {
         val configuredPlatforms = settingsStore.getConfiguredPlatforms()
@@ -53,14 +63,18 @@ class QuotaRepository(
                 PlatformType.SILICONFLOW -> fetchSiliconFlow(authHeader, platform)
                 PlatformType.VOLCENGINE_ARK -> fetchVolcengineArk(platform)
                 PlatformType.KIMI_CODE -> fetchKimiCodeUsages(authHeader, platform)
+                PlatformType.MIMO -> fetchMimoConsole(platform)
             }
 
             // DeepSeek/Kimi 无官方用量API，用本地月初余额快照推算；
             // GLM 有资源包接口、SiliconFlow 有官方可用余额字段，不走本地推算；
             // 火山方舟的本地月度追踪在 fetchVolcengineArk 内部处理（初始余额来自用户输入），
-            // Kimi Code 为订阅配额模式，均无远程余额，不参与此推算
+            // Kimi Code 为订阅配额模式，均无远程余额，不参与此推算；
+            // DeepSeek 配置了网页会话时已使用控制台真实用量（dataSourceLabel 非空），不再走本地推算；
+            // MiMo 的 CNY 余额同样在 fetchMimoConsole 内部走本地月度追踪
             val result = if ((platform == PlatformType.DEEPSEEK || platform == PlatformType.KIMI)
                 && rawQuota.isAvailable && rawQuota.errorMessage == null
+                && rawQuota.dataSourceLabel == null
             ) {
                 val balance = rawQuota.totalBalance.toDoubleOrNull()
                 if (balance != null) {
@@ -93,7 +107,7 @@ class QuotaRepository(
         }
     }
 
-    // ===== DeepSeek：余额（官方未提供用量查询接口，月度用量由本地余额快照推算） =====
+    // ===== DeepSeek：余额（官方接口 /user/balance）+ 可选网页控制台真实用量明细 =====
 
     private suspend fun fetchDeepSeek(authHeader: String, platform: PlatformType): QuotaInfo {
         val response = deepSeekApi.getBalance(authHeader)
@@ -101,14 +115,151 @@ class QuotaRepository(
 
         val body = response.body()
         val balance = body?.balanceInfos?.firstOrNull()
-
-        return QuotaInfo(
+        val base = QuotaInfo(
             platform = platform,
             isAvailable = body?.isAvailable ?: false,
             isConfigured = true,
             totalBalance = balance?.totalBalance ?: "0.00",
             currency = balance?.currency ?: "CNY"
         )
+
+        // 可选增强：使用 WebLoginActivity 抓取的网页会话（userToken + Cookie）读取控制台
+        // 真实用量明细——真实本月用量 + 按模型/请求数的调用明细（余额仍是官方接口，二者一致）。
+        // 控制台请求失败（会话过期/WAF/接口变更）时静默回退官方 API Key 模式，
+        // 不影响卡片展示；用户可从设置页重新打开登录页刷新会话（WebView 登录态持久化，
+        // 会话仍有效时无需再次输入账号）。
+        val session = runCatching { webSessionStore.getWebSession(platform) }.getOrNull()
+        if (session.isNullOrBlank()) {
+            android.util.Log.d("WatchDogRepo", "DeepSeek: no console session, official-only")
+            return base
+        }
+
+        val cookie = runCatching { webSessionStore.getWebSessionCookie(platform) }.getOrNull()
+        val console = runCatching { fetchDeepSeekConsole(session, cookie) }.getOrNull()
+        // 已配置会话但控制台抓取失败：回退官方模式，并在卡片标注诊断码
+        // （区分 WAF 拦截 429 / 接口变更 404 / 会话失效 401，便于定位）
+        val consoleData = console?.data
+            ?: return base.copy(
+                consoleDiag = "控制台抓取失败 HTTP " +
+                    (console?.codes?.takeIf { it.isNotEmpty() }?.joinToString("/") ?: "网络异常")
+            )
+
+        val wallet = consoleData.summary?.primaryBalance
+        val currency = wallet?.currency?.takeIf { it.isNotBlank() } ?: base.currency
+        return base.copy(
+            totalBalance = wallet?.let { String.format(Locale.US, "%.2f", it.balance) } ?: base.totalBalance,
+            currency = currency,
+            monthlyUsage = consoleData.monthlyUsage?.let {
+                if (it < 0.01) "0.00" else String.format(Locale.US, "%.2f", it)
+            } ?: base.monthlyUsage,
+            modelUsages = consoleData.modelUsages,
+            dataSourceLabel = "网页控制台"
+        )
+    }
+
+    private data class DeepSeekConsoleData(
+        val summary: DeepSeekConsoleParser.UserSummary?,
+        val monthlyUsage: Double?,
+        val modelUsages: List<ModelUsage>
+    )
+
+    private data class DeepSeekConsoleResult(
+        val data: DeepSeekConsoleData?,
+        /** 三路请求的 HTTP 状态码（summary/cost/amount 顺序），诊断用。 */
+        val codes: List<Int>
+    )
+
+    /**
+     * 拉取 DeepSeek 控制台数据：用户汇总 + 本月按模型成本 + 本月按模型 Token/请求数（三路并行）。
+     * 用量走月度端点（usage/cost|amount?month=&year=）；旧版 by_api_key 端点的
+     * start/end/tz 参数已失效（2026-08 真机实测 INVALID_PARAM）。
+     * 请求携带登录时的 Cookie（WAF 指纹关联），解析不到任何数据时返回 data=null + 各路 HTTP 码。
+     */
+    private suspend fun fetchDeepSeekConsole(session: String, cookie: String?): DeepSeekConsoleResult {
+        val authHeader = "Bearer $session"
+        val cal = Calendar.getInstance()
+        val month = cal.get(Calendar.MONTH) + 1
+        val year = cal.get(Calendar.YEAR)
+
+        val (summaryResp, costResp, amountResp) = coroutineScope {
+            val s = async { runCatching { deepSeekConsoleApi.getUserSummary(authHeader, cookie) }.getOrNull() }
+            val c = async {
+                runCatching { deepSeekConsoleApi.getUsageCostMonthly(authHeader, cookie, month, year) }.getOrNull()
+            }
+            val a = async {
+                runCatching { deepSeekConsoleApi.getUsageAmountMonthly(authHeader, cookie, month, year) }.getOrNull()
+            }
+            Triple(s.await(), c.await(), a.await())
+        }
+        val codes = listOf(summaryResp, costResp, amountResp).mapNotNull { it?.code() }
+        // 先读出响应体再解析：body 只能消费一次，顺带打日志供真机诊断
+        val summaryBody = summaryResp?.takeIf { it.isSuccessful }?.body()?.string()
+        val costBody = costResp?.takeIf { it.isSuccessful }?.body()?.string()
+        val amountBody = amountResp?.takeIf { it.isSuccessful }?.body()?.string()
+        android.util.Log.i(
+            "WatchDogRepo",
+            "DeepSeek console codes=$codes session=${session.length}c cookie=${cookie?.length ?: 0}c month=$month/$year"
+        )
+        listOf("summary" to summaryBody, "cost" to costBody, "amount" to amountBody)
+            .forEach { (name, body) ->
+                android.util.Log.i(
+                    "WatchDogRepo",
+                    "DeepSeek console[$name] len=${body?.length ?: -1} body=${body?.take(400)?.replace('\n', ' ') ?: "<empty>"}"
+                )
+            }
+
+        val summary = summaryBody?.let(DeepSeekConsoleParser::parseUserSummary)
+        val costRows = costBody?.let { DeepSeekConsoleParser.parseMonthlyTotals(it, costMode = true) }
+        val amountRows = amountBody?.let { DeepSeekConsoleParser.parseMonthlyTotals(it, costMode = false) }
+        val modelUsages = buildMonthlyModelUsages(costRows, amountRows)
+        android.util.Log.i(
+            "WatchDogRepo",
+            "DeepSeek console parsed: summary=${summary != null} costRows=${costRows?.size} " +
+                "amountRows=${amountRows?.size} models=${modelUsages.size}"
+        )
+
+        if (summary == null && costRows == null && amountRows == null) {
+            return DeepSeekConsoleResult(null, codes)
+        }
+
+        // 真实本月用量：优先 summary.monthly_usage；缺失时按月度成本接口的模型金额合计
+        val monthlyUsage = summary?.monthlyUsage
+            ?: costRows?.sumOf { it.cost }?.takeIf { it > 0.0 }
+
+        return DeepSeekConsoleResult(
+            DeepSeekConsoleData(
+                summary = summary,
+                monthlyUsage = monthlyUsage,
+                modelUsages = modelUsages
+            ),
+            codes
+        )
+    }
+
+    /** 合并月度 cost/amount 接口为按模型明细：amount 提供 Token/请求数，cost 提供金额。 */
+    private fun buildMonthlyModelUsages(
+        costRows: List<DeepSeekConsoleParser.MonthlyRow>?,
+        amountRows: List<DeepSeekConsoleParser.MonthlyRow>?
+    ): List<ModelUsage> {
+        val costByModel = costRows?.associate { it.model to it.cost } ?: emptyMap()
+        val models = (costByModel.keys + (amountRows?.map { it.model } ?: emptyList())).distinct().sorted()
+        return models.mapNotNull { model ->
+            val a = amountRows?.firstOrNull { it.model == model }
+            val inputTokens = (a?.promptTokens ?: 0) + (a?.cacheHit ?: 0) + (a?.cacheMiss ?: 0)
+            val outputTokens = a?.outputTokens ?: 0
+            val cost = costByModel[model] ?: 0.0
+            if ((a?.requests ?: 0L) <= 0L && inputTokens + outputTokens <= 0L && cost <= 0.0) {
+                return@mapNotNull null
+            }
+            ModelUsage(
+                modelName = model,
+                requestCount = a?.requests ?: 0,
+                totalTokens = inputTokens + outputTokens,
+                inputTokens = inputTokens,
+                outputTokens = outputTokens,
+                cost = String.format(Locale.US, "%.2f", cost)
+            )
+        }
     }
 
     // ===== Kimi =====
@@ -263,6 +414,102 @@ class QuotaRepository(
             quotaWindows = windows,
             boosterInfo = KimiCodeParser.parseBooster(body.booster)
         )
+    }
+
+    // ===== 小米 MiMo：官方无"仅凭 API Key"的余额/用量接口（2026-02 实测全部 404/401），
+    // 数据来自网页控制台内部接口（platform.xiaomimimo.com 的 /api/v1 路径），
+    // 鉴权头 api-platform_ph = 浏览器 Cookie 中的会话值，由用户在设置页粘贴 =====
+
+    private suspend fun fetchMimoConsole(platform: PlatformType): QuotaInfo {
+        val session = webSessionStore.getWebSession(platform)
+            // 无会话：引导进入内嵌登录页（WebView 登录态持久化，会话仍有效时秒抓凭证免输入）
+            ?: return QuotaInfo.error(platform, "尚未建立网页会话，点击下方按钮打开登录页获取")
+                .copy(needsRelogin = true)
+
+        // 1) Token Plan 订阅数据（detail / usage 并行拉取，互不阻塞）
+        val (detailResponse, usageResponse) = coroutineScope {
+            val d = async { runCatching { mimoConsoleApi.getTokenPlanDetail(session) }.getOrNull() }
+            val u = async { runCatching { mimoConsoleApi.getTokenPlanUsage(session) }.getOrNull() }
+            d.await() to u.await()
+        }
+
+        val unauthorized = (detailResponse?.code() == 401) || (usageResponse?.code() == 401)
+        val planDetail = detailResponse
+            ?.takeIf { it.isSuccessful }
+            ?.body()?.string()
+            ?.let(MiMoConsoleParser::parseTokenPlanDetail)
+        val windows = usageResponse
+            ?.takeIf { it.isSuccessful }
+            ?.body()?.string()
+            ?.let(MiMoConsoleParser::parseTokenPlanUsage)
+            ?: emptyList()
+
+        // 2) 余额探测：候选路径逐个尝试（带会话），第一个 200 且可解析出余额者胜。
+        //    任何一步失败都不影响令牌套餐数据展示。
+        val balance = if (!unauthorized) probeMimoBalance(session) else null
+
+        // 3) 组合结果：订阅数据存在（套餐/窗口）或余额命中即视为有效数据
+        val hasSubscription = planDetail != null || windows.isNotEmpty()
+        if (!hasSubscription && balance == null) {
+            return when {
+                // MiMo 走小米账号 OAuth（含人机验证），无法后台续期；官方 Cookie 有效期 24h，
+                // 过期后引导用户进入登录页（WebView 会话仍有效时自动完成，无需再输账号）
+                unauthorized ->
+                    QuotaInfo.error(platform, "网页会话已过期，点击下方按钮重新登录")
+                        .copy(needsRelogin = true)
+                else ->
+                    QuotaInfo.error(platform, "控制台响应格式无法识别，接口可能已变更")
+            }
+        }
+
+        var result = QuotaInfo(
+            platform = platform,
+            isAvailable = hasSubscription || balance != null,
+            isConfigured = true,
+            planName = planDetail?.planName,
+            quotaWindows = windows,
+            boosterInfo = planDetail?.let { buildMimoPlanDesc(it) },
+            currency = if (hasSubscription && balance == null) "Credits" else "CNY",
+            dataSourceLabel = "网页控制台"
+        )
+
+        if (balance != null) {
+            // CNY 余额走本地月度追踪（与 DeepSeek/Kimi 相同机制），并参与总余额/趋势
+            val currency = balance.currency ?: "CNY"
+            val isCny = currency.equals("CNY", true)
+            val monthlyUsage = if (isCny) {
+                settingsStore.recordBalanceAndGetMonthlyUsage(platform, balance.balance)
+            } else null
+            result = result.copy(
+                totalBalance = String.format(Locale.US, "%.2f", balance.balance),
+                availableBalance = String.format(Locale.US, "%.2f", balance.balance),
+                monthlyUsage = if (monthlyUsage != null && monthlyUsage >= 0.01)
+                    String.format(Locale.US, "%.2f", monthlyUsage) else "0.00",
+                currency = currency
+            )
+        }
+
+        return result
+    }
+
+    /** 带会话探测余额类候选路径；首个命中即返回。 */
+    private suspend fun probeMimoBalance(session: String): MiMoConsoleParser.BalanceInfo? {
+        for (path in MiMoConsoleParser.BALANCE_CANDIDATES) {
+            val body = runCatching {
+                val resp = mimoConsoleApi.getRaw(session, path)
+                if (resp.isSuccessful) resp.body()?.string() else null
+            }.getOrNull() ?: continue
+            val info = MiMoConsoleParser.parseBalanceInfo(body)
+            if (info != null) return info
+        }
+        return null
+    }
+
+    /** 订阅详情 → booster 描述文案（纯字符串，展示在卡片底部）。 */
+    private fun buildMimoPlanDesc(d: MiMoConsoleParser.TokenPlanDetail): String? {
+        val cycle = d.cycleLabel ?: return null
+        val credits = d.totalCredits?.let { FormatUtils.formatNumber(it.toLong()) }
+        return if (credits != null) "$cycle · Credits 额度 $credits" else cycle
     }
 
     private fun httpError(platform: PlatformType, code: Int): QuotaInfo = when (code) {

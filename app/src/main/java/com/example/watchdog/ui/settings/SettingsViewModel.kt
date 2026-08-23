@@ -16,7 +16,9 @@ data class PlatformSettingsState(
     val isEnabled: Boolean = false,
     val apiKey: String = "",
     /** 手动填写的初始余额（估算模式平台用，当前仅火山方舟） */
-    val initialBalance: Double? = null
+    val initialBalance: Double? = null,
+    /** 是否已配置网页控制台会话令牌（爬取数据源；MiMo 必需、DeepSeek 可选；不存明文值） */
+    val webSessionConfigured: Boolean = false
 )
 
 data class SettingsUiState(
@@ -40,6 +42,7 @@ class SettingsViewModel(
 ) : ViewModel() {
 
     private val settingsStore: SettingsStore = appContainer.settingsStore
+    private val webSessionStore = appContainer.webSessionStore
 
     private val _uiState = MutableStateFlow(SettingsUiState(themeMode = appContainer.themeMode.value))
     val uiState: StateFlow<SettingsUiState> = _uiState.asStateFlow()
@@ -57,7 +60,10 @@ class SettingsViewModel(
                     platform = platform,
                     isEnabled = enabled,
                     apiKey = apiKey,
-                    initialBalance = settingsStore.getInitialBalance(platform)
+                    initialBalance = settingsStore.getInitialBalance(platform),
+                    webSessionConfigured = if (platform.supportsConsoleSession) {
+                        webSessionStore.hasWebSession(platform)
+                    } else false
                 )
             }
             val interval = settingsStore.getAutoRefreshInterval()
@@ -101,7 +107,18 @@ class SettingsViewModel(
         viewModelScope.launch {
             settingsStore.removeApiKey(platform)
             settingsStore.setEnabled(platform, false)
+            if (platform.supportsConsoleSession) {
+                webSessionStore.removeWebSession(platform)
+            }
             dismissApiKeyDialog()
+            loadSettings()
+        }
+    }
+
+    /** 保存网页控制台会话令牌（加密存储，界面不回显明文） */
+    fun saveWebSession(platform: PlatformType, token: String) {
+        viewModelScope.launch {
+            webSessionStore.saveWebSession(platform, token)
             loadSettings()
         }
     }

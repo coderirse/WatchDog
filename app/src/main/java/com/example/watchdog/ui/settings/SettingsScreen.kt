@@ -52,6 +52,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import com.example.watchdog.ui.weblogin.WebLoginActivity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.tooling.preview.Preview
@@ -109,12 +110,20 @@ fun SettingsScreen(
     uiState.showApiKeyDialog?.let { platform ->
         val currentApiKey = uiState.platforms
             .find { it.platform == platform }?.apiKey ?: ""
+        val sessionConfigured = uiState.platforms
+            .find { it.platform == platform }?.webSessionConfigured == true
+        val context = LocalContext.current
 
         ApiKeyDialog(
             platform = platform,
             currentApiKey = currentApiKey,
+            sessionConfigured = sessionConfigured,
             onDismiss = { viewModel.dismissApiKeyDialog() },
             onSave = { p, key -> viewModel.saveApiKey(p, key) },
+            onSaveWebSession = { p, token -> viewModel.saveWebSession(p, token) },
+            onOpenWebLogin = { p ->
+                context.startActivity(WebLoginActivity.intent(context, p))
+            },
             onDelete = { p -> viewModel.deleteApiKey(p) }
         )
     }
@@ -257,6 +266,7 @@ private fun consoleHost(platform: PlatformType): String = when (platform) {
     PlatformType.SILICONFLOW -> stringResource(R.string.settings_console_siliconflow)
     PlatformType.VOLCENGINE_ARK -> stringResource(R.string.settings_console_volcengine)
     PlatformType.KIMI_CODE -> stringResource(R.string.settings_console_kimi_code)
+    PlatformType.MIMO -> stringResource(R.string.settings_console_mimo)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -314,6 +324,52 @@ private fun PlatformSettingsCard(
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
                     text = stringResource(R.string.settings_kimi_code_independent),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.outline
+                )
+            }
+
+            // 网页控制台会话配置（小米 MiMo 必需；DeepSeek 可选增强）
+            if (platform.supportsConsoleSession) {
+                Spacer(modifier = Modifier.height(10.dp))
+                HorizontalDivider()
+                Spacer(modifier = Modifier.height(10.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = stringResource(R.string.settings_console_session_title),
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                        Text(
+                            text = if (platformState.webSessionConfigured) {
+                                stringResource(R.string.settings_console_session_configured)
+                            } else {
+                                stringResource(R.string.settings_console_session_empty)
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (!platformState.webSessionConfigured && platform == PlatformType.MIMO) {
+                                // 仅必需会话的平台未配置时标红（MiMo）；DeepSeek 为可选增强，低调提示
+                                MaterialTheme.colorScheme.error
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            }
+                        )
+                    }
+                    TextButton(onClick = onClick) {
+                        Text(stringResource(R.string.settings_console_session_edit))
+                    }
+                }
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = if (platform == PlatformType.MIMO) {
+                        stringResource(R.string.settings_mimo_session_desc)
+                    } else {
+                        stringResource(R.string.settings_deepseek_session_desc)
+                    },
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.outline
                 )
@@ -741,7 +797,8 @@ private val previewUiState = SettingsUiState(
         PlatformSettingsState(PlatformType.GLM, isEnabled = true, apiKey = "glm-xyz987654321"),
         PlatformSettingsState(PlatformType.SILICONFLOW),
         PlatformSettingsState(PlatformType.VOLCENGINE_ARK, isEnabled = true, apiKey = "ark-abcd1234", initialBalance = 100.0),
-        PlatformSettingsState(PlatformType.KIMI_CODE)
+        PlatformSettingsState(PlatformType.KIMI_CODE),
+        PlatformSettingsState(PlatformType.MIMO, isEnabled = true, apiKey = "sk-mimo123456", webSessionConfigured = true)
     ),
     autoRefreshInterval = 5,
     themeMode = "system",
