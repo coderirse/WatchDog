@@ -365,8 +365,24 @@ class WebLoginActivity : ComponentActivity() {
             wv.evaluateJavascript(kimiCaptureScript) { raw ->
                 flog("kimi capture raw=${raw?.take(120)} url=${wv.url}")
                 val obj = parseJsObject(raw)
-                flog("kimi parsed obj=${obj?.toString()?.take(120)} tokLen=${obj?.optString("token")?.length} amounts=${obj?.optJSONArray("amounts")?.toString()?.take(150)}")
-                // token 未抓到则存储并提示；已抓到则仅持续采集金额（供用量页导航后读取）
+                flog("kimi parsed obj=${obj?.toString()?.take(120)} tokLen=${obj?.optString("token")?.length}")
+                // 每次轮询都尝试保存快照：Kimi 首页金额是 SPA 异步渲染，
+                // 首次采集可能为 null，页面渲染完成后才有值，故持续采到非空即覆盖
+                if (obj != null) {
+                    val b = obj.optString("balance").ifBlank { null }
+                    val m = obj.optString("month").ifBlank { null }
+                    val t = obj.optString("total").ifBlank { null }
+                    if (b != null || m != null || t != null) {
+                        flog("kimi snapshot b=$b m=$m t=$t")
+                        lifecycleScope.launch(Dispatchers.IO) {
+                            runCatching {
+                                (application as WatchDogApplication).appContainer.webSessionStore
+                                    .saveKimiSnapshot(b, m, t)
+                            }
+                        }
+                    }
+                }
+                // token 未抓到则存储并提示；已抓到则提示停留
                 if (kimiToken == null && obj != null && obj.optString("token").length > 10) {
                     kimiToken = obj.optString("token")
                     kimiCookie = runCatching {
@@ -374,12 +390,6 @@ class WebLoginActivity : ComponentActivity() {
                     }.getOrNull()
                     setStatus(getString(R.string.weblogin_status_captured_kimi))
                     updateCaptureButton()
-                    // 方案乙验证：页面内 fetch 首页 SSR HTML，检测是否内嵌金额数据
-                    wv.evaluateJavascript(
-                        "(function(){try{return fetch('/').then(function(r){return r.text()}).then(function(t){" +
-                            "return JSON.stringify({len:t.length,hasAmt:/余额|今日消费|本月消费|总消费|amount|balance/i.test(t),hasNext:!!t.match(/__NEXT_DATA__|__next_f/)})" +
-                            "}).catch(function(e){return 'ERR'})}catch(e){return 'ERR'}})()"
-                    ) { r -> flog("KIMI_SSR $r") }
                 }
                 when {
                     kimiToken == null && obj?.optBoolean("pending") == true ->
@@ -441,21 +451,38 @@ class WebLoginActivity : ComponentActivity() {
               return null;
             }
             var token = fromStorage(localStorage) || fromStorage(sessionStorage) || fromCookie();
-            // 同时采集当前页面可见金额文本（¥/￥ + 数字）。SSR 常把金额拆成相邻子元素
-            // （<span>￥</span><span>7.56</span>），故读取父元素合并 textContent 再匹配。
-            var amounts = [];
+            // 采集结构化金额：按标签(余额/今日/本月/总消费)就近匹配金额。
+            // Kimi 主页 SSR/dom 中标签与金额相邻，金额可能是 7.56019 形式（无￥前缀）
+            // 或 <span>￥</span><span>7.56</span> 拆分。用容器的合并 textContent 匹配。
+            var balance = null, today = null, month = null, total = null;
+            function pickAmount(text, keywords){
+              for(var i=0;i<keywords.length;i++){
+                var idx = text.indexOf(keywords[i]);
+                if(idx < 0) continue;
+                var tail = text.substring(idx, idx + 40);
+                var m = tail.match(/\d{1,3}(?:,\d{3})*(?:\.\d{1,6})/);
+                if(m) return m[0];
+              }
+              return null;
+            }
             try{
               var all = document.querySelectorAll('body *');
-              for(var i=0;i<all.length && amounts.length<30;i++){
+              for(var i=0;i<all.length;i++){
                 var el = all[i];
-                var txt=(el.textContent||'').trim();
-                // 只对"较薄"节点（文本长度<40，避免一整页）匹配完整金额
-                if(txt.length>0 && txt.length<40 && /^[¥￥]\s?\d{1,3}(,\d{3})*(\.\d+)?$/.test(txt)){
-                  amounts.push(txt);
-                }
+                if(el.children && el.children.length>0) continue;
+                var t = (el.textContent||'').trim();
+                if(!t) continue;
+                // 优先取含标签的父容器文本（标签+金额常在同一行容器）
+                var par = el.parentElement;
+                var pt = par ? (par.textContent||'').trim() : '';
+                if(!balance) balance = pickAmount(pt, ['余额','账户余额','可用余额']);
+                if(!today) today = pickAmount(pt, ['今日消费','今日消耗','今日已用']);
+                if(!month) month = pickAmount(pt, ['本月消费','本月消耗','本月已用','本月支出']);
+                if(!total) total = pickAmount(pt, ['总消费','累计消费','总消耗','累计消耗']);
+                if(balance && today && month && total) break;
               }
             }catch(e){}
-            return token ? {token: token, amounts: amounts} : null;
+            return token ? {token: token, balance: balance, today: today, month: month, total: total} : null;
           }catch(e){ return null; }
         })()
     """.trimIndent()

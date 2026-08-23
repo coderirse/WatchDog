@@ -327,25 +327,39 @@ class QuotaRepository(
         )
     }
 
-    // ===== Kimi 无 API Key 但有网页会话：用 Cookie 请求控制台 SSR HTML，解析余额/消费 =====
+    // ===== Kimi 无 API Key 但有网页会话：优先读登录时 DOM 采集的快照，SSR 解析作备用 =====
 
     private suspend fun fetchKimiConsoleSession(platform: PlatformType): QuotaInfo {
+        val hasSession = runCatching { webSessionStore.hasWebSession(platform) }.getOrDefault(false)
+        if (!hasSession) return QuotaInfo.notConfigured(platform)
+        // 1) 优先读登录时采集的控制台快照（DOM 采集的余额/消费，真实可靠，非实时）
+        val snap = runCatching { webSessionStore.getKimiSnapshot() }.getOrNull()
+        if (snap != null && (snap.balance != null || snap.month != null || snap.total != null)) {
+            return QuotaInfo(
+                platform = platform, isAvailable = true, isConfigured = true,
+                totalBalance = fmtAmount(snap.balance),
+                monthlyUsage = fmtAmount(snap.month),
+                currency = "CNY",
+                dataSourceLabel = "网页控制台",
+                modelUsages = emptyList(),
+                boosterInfo = snap.total?.let { "累计消费 ¥${fmtAmount(it)}" }
+            )
+        }
+        // 2) 备用：Cookie 请求 SSR HTML 解析（实时但解析复杂，可能失败）
         val cookie = runCatching { webSessionStore.getWebSessionCookie(platform) }.getOrNull()
         if (cookie.isNullOrBlank()) {
-            // 无 Cookie 但有会话 token：显示"已连接"占位，避免误报未配置
-            val hasSession = runCatching { webSessionStore.hasWebSession(platform) }.getOrDefault(false)
-            if (!hasSession) return QuotaInfo.notConfigured(platform)
             return QuotaInfo(
                 platform = platform, isAvailable = true, isConfigured = true,
                 totalBalance = "0.00", currency = "CNY", dataSourceLabel = "网页控制台",
                 boosterInfo = "已连接控制台会话，用量明细待接入"
             )
         }
-        // 用 Cookie 请求 SSR HTML，解析内嵌金额
         val result = runCatching {
             val resp = kimiConsoleApi.getConsoleHome(cookie)
             if (!resp.isSuccessful) return@runCatching null
-            KimiConsoleParser.parse(resp.body()?.string())
+            val html = resp.body()?.string()
+            android.util.Log.i("WatchDogRepo", "kimi SSR htmlLen=${html?.length ?: -1}")
+            KimiConsoleParser.parse(html)
         }.getOrNull()
             ?: return QuotaInfo(
                 platform = platform, isAvailable = true, isConfigured = true,
@@ -358,13 +372,19 @@ class QuotaRepository(
             platform = platform,
             isAvailable = true,
             isConfigured = true,
-            totalBalance = balance,
-            monthlyUsage = monthCost ?: "0.00",
+            totalBalance = fmtAmount(balance),
+            monthlyUsage = fmtAmount(monthCost),
             currency = "CNY",
             dataSourceLabel = "网页控制台",
             modelUsages = emptyList(),
             boosterInfo = result.totalCost?.let { "累计消费 ¥$it" }
         )
+    }
+
+    /** 金额格式化为两位小数（7.56019→7.56；null/无法解析→0.00）。 */
+    private fun fmtAmount(v: String?): String {
+        val d = v?.toDoubleOrNull() ?: return "0.00"
+        return String.format(Locale.US, "%.2f", d)
     }
 
     // ===== GLM =====

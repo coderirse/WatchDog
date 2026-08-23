@@ -6,6 +6,7 @@ import androidx.core.content.edit
 import com.example.watchdog.data.model.PlatformType
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import org.json.JSONObject
 
 /**
  * 网页控制台会话凭证存储（"爬取"数据源的基础设施）。
@@ -79,4 +80,36 @@ class WebSessionStore(context: Context) {
     private fun tokenKey(platform: PlatformType): String = "web_session_${platform.name}"
 
     private fun cookieKey(platform: PlatformType): String = "web_session_cookie_${platform.name}"
+
+    // ===== Kimi 控制台快照（登录时从页面 DOM 采集的余额/消费，跨模块显示）=====
+
+    suspend fun saveKimiSnapshot(balance: String?, month: String?, total: String?) {
+        withContext(Dispatchers.IO) {
+            val json = JSONObject()
+                .put("balance", balance ?: "")
+                .put("month", month ?: "")
+                .put("total", total ?: "")
+                .toString()
+            prefs.edit { putString(snapshotKey(PlatformType.KIMI), SecureCipher.encrypt(json)) }
+        }
+    }
+
+    suspend fun getKimiSnapshot(): KimiSnapshot? {
+        return withContext(Dispatchers.IO) {
+            val stored = prefs.getString(snapshotKey(PlatformType.KIMI), "") ?: ""
+            val json = stored.ifBlank { null }?.let { SecureCipher.decrypt(it) } ?: return@withContext null
+            runCatching {
+                val o = JSONObject(json)
+                KimiSnapshot(
+                    balance = o.optString("balance").ifBlank { null },
+                    month = o.optString("month").ifBlank { null },
+                    total = o.optString("total").ifBlank { null }
+                )
+            }.getOrNull()
+        }
+    }
+
+    private fun snapshotKey(platform: PlatformType): String = "web_session_snapshot_${platform.name}"
+
+    data class KimiSnapshot(val balance: String?, val month: String?, val total: String?)
 }
