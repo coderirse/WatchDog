@@ -30,11 +30,11 @@
         </activity>
         <activity
             android:name=".ui.weblogin.WebLoginActivity"
-            android:exported="false"
+            android:exported="true"
             android:label="@string/weblogin_title_plain"
             android:screenOrientation="portrait"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|keyboard|uiMode|density|fontScale"
-            android:windowSoftInputMode="adjustResize" />
+            android:windowSoftInputMode="adjustPan" />
     </application>
 
 </manifest>

@@ -3,41 +3,20 @@ package com.example.watchdog.ui.weblogin
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
+import android.graphics.Color
 import android.os.Bundle
+import android.view.Gravity
 import android.webkit.CookieManager
 import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.Button
+import android.widget.LinearLayout
+import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.ComponentActivity
-import androidx.activity.compose.setContent
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.imePadding
-import androidx.compose.foundation.layout.navigationBarsPadding
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.viewinterop.AndroidView
+import androidx.activity.OnBackPressedCallback
 import androidx.lifecycle.lifecycleScope
 import com.example.watchdog.MainActivity
 import com.example.watchdog.R
@@ -73,12 +52,37 @@ class WebLoginActivity : ComponentActivity() {
     private var loginPlatform: PlatformType = PlatformType.MIMO
     private var finished = false
 
-    /** WebView 就绪状态：null → 显示加载中，创建完成后重组挂载。 */
-    private var webViewReady by mutableStateOf<WebView?>(null)
-    private var statusText by mutableStateOf("")
+    /** WebView 就绪状态：null → 显示加载中，创建完成后挂载。 */
+    private var webViewReady: WebView? = null
+    private var webViewContainer: LinearLayout? = null
+    private var statusView: TextView? = null
+    private var statusText: String = ""
 
     /** 已被平台 API 拒绝的 MiMo Cookie 值（避免轮询反复用失效凭证打接口）。 */
     private var mimoRejectedToken: String? = null
+
+    /** Kimi 方案 A：捕获到凭证后暂存内存，停留页面，待用户确认(完成并返回)再存储+跳转。 */
+    private var kimiToken: String? = null
+    private var kimiCookie: String? = null
+    private var captureButton: Button? = null
+
+    /** 调试日志直写文件（logcat 在部分 ROM 上会卡死/丢日志，adb pull 读取更可靠）。 */
+    private fun flog(msg: String) {
+        android.util.Log.i("WatchDogLogin", msg)
+        runCatching {
+            val f = java.io.File(cacheDir, "weblogin_debug.log")
+            f.appendText(
+                java.text.SimpleDateFormat("HH:mm:ss.SSS", java.util.Locale.US)
+                    .format(java.util.Date()) + " " + msg + "\n"
+            )
+        }
+    }
+
+    override fun attachBaseContext(newBase: Context) {
+        // 暂不干预 uiMode：实测强制日间上下文会让小米登录 SPA 卡在"__page_loading"
+        // （rules=12、docH=0，等 20s 不消失）。日间/深色由系统决定，交给页面自身处理。
+        super.attachBaseContext(newBase)
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -86,19 +90,9 @@ class WebLoginActivity : ComponentActivity() {
             ?.let { runCatching { PlatformType.valueOf(it) }.getOrNull() }
             ?: PlatformType.MIMO
 
-        statusText = getString(R.string.weblogin_status_loading, loginPlatform.displayName)
-
-        setContent {
-            MaterialTheme {
-                WebLoginContent(
-                    platform = loginPlatform,
-                    status = statusText,
-                    onManualCapture = { tryCapture(manual = true) },
-                    onCancel = { finish() }
-                )
-            }
-        }
-        onBackPressedDispatcher.addCallback(this, object : androidx.activity.OnBackPressedCallback(true) {
+        setStatus(getString(R.string.weblogin_status_loading, loginPlatform.displayName))
+        setContentView(buildLayout())
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
                 val wv = webViewReady
                 if (wv?.canGoBack() == true) wv.goBack() else finish()
@@ -109,12 +103,136 @@ class WebLoginActivity : ComponentActivity() {
         startCapturePolling()
     }
 
+    /**
+     * 捕获按钮点击：
+     * - Kimi：若已捕获凭证(方案A停留页面)则"完成并返回"，否则手动触发捕获；
+     * - 其他平台：手动触发捕获。
+     */
+    private fun onCaptureButtonClick() {
+        if (loginPlatform == PlatformType.KIMI && kimiToken != null) {
+            finishWithSession(kimiToken!!, kimiCookie)
+        } else {
+            tryCapture(manual = true)
+        }
+    }
+
+    /** Kimi 捕获到凭证后把按钮文字改为"完成并返回"。 */
+    private fun updateCaptureButton() {
+        if (loginPlatform == PlatformType.KIMI && kimiToken != null) {
+            captureButton?.text = getString(R.string.weblogin_done_kimi)
+        }
+    }
+
+    /** 更新状态行文字（纯 View：直接改 TextView 文本）。 */
+    private fun setStatus(msg: String) {
+        statusText = msg
+        statusView?.text = msg
+    }
+
+    /**
+     * 构建纯 View 布局（LinearLayout）：顶部标题区 + WebView(weight=1) + 底部按钮行。
+     * 不使用 Compose——AndroidView 包装 WebView 在键盘弹出/窗口 resize 时会被 Compose
+     * 重组移动视图，与 WebView 内部 HTML5 输入合成叠加导致字符重影/镜像（真机实测）。
+     * 纯 View 布局下 WebView 作为直接子视图，窗口缩放仅平移/缩放整棵 View 树，不干扰
+     * WebView 内部渲染。
+     */
+    private fun buildLayout(): LinearLayout {
+        val dp = resources.displayMetrics.density
+        // 全屏适配：根布局不设左右 padding，WebView 铺满（修复"白边不适配"）
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(Color.WHITE)
+        }
+
+        // 标题区左右留边距（仅文字区，不作用于 WebView）
+        val info = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding((16 * dp).toInt(), (12 * dp).toInt(), (16 * dp).toInt(), (6 * dp).toInt())
+            setBackgroundColor(Color.WHITE)
+        }
+        val title = TextView(this).apply {
+            text = getString(R.string.weblogin_title, loginPlatform.displayName)
+            textSize = 18f
+            setTextColor(Color.BLACK)
+        }
+        val hint = TextView(this).apply {
+            text = getString(R.string.weblogin_hint)
+            textSize = 12f
+            setTextColor(Color.GRAY)
+        }
+        val status = TextView(this).apply {
+            text = statusText
+            textSize = 11f
+            setTextColor(Color.GRAY)
+            maxLines = 4
+        }
+        statusView = status
+        info.addView(title)
+        info.addView(hint)
+        info.addView(status)
+        root.addView(info)
+
+        // WebView 铺满剩余空间（无左右边距，全屏适配）
+        val webViewContainer = LinearLayout(this).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f
+            )
+        }
+        this.webViewContainer = webViewContainer
+        root.addView(webViewContainer)
+
+        // 底部按钮：Material 观感（圆角 + 主色填充 / 次要色描边），非复古系统按钮
+        val cancelBg = android.graphics.drawable.GradientDrawable().apply {
+            cornerRadius = (24 * dp).toInt().toFloat()
+            setColor(Color.rgb(0xEE, 0xEE, 0xF2))
+        }
+        val captureBg = android.graphics.drawable.GradientDrawable().apply {
+            cornerRadius = (24 * dp).toInt().toFloat()
+            setColor(Color.rgb(0x6C, 0x4D, 0xFF))
+        }
+        val buttons = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding((16 * dp).toInt(), (8 * dp).toInt(), (16 * dp).toInt(), (12 * dp).toInt())
+            setBackgroundColor(Color.WHITE)
+        }
+        val gap = (8 * dp).toInt()
+        val cancel = Button(this).apply {
+            text = getString(R.string.action_cancel)
+            background = cancelBg
+            textSize = 15f
+            layoutParams = LinearLayout.LayoutParams(0, (48 * dp).toInt(), 1f)
+            setOnClickListener { finish() }
+        }
+        val capture = Button(this).apply {
+            text = getString(R.string.weblogin_done)
+            background = captureBg
+            setTextColor(Color.WHITE)
+            textSize = 15f
+            layoutParams = LinearLayout.LayoutParams(0, (48 * dp).toInt(), 1f)
+            setOnClickListener { onCaptureButtonClick() }
+        }
+        captureButton = capture
+        // 复用布局参数：给 gap 用 margin
+        val cancelLp = LinearLayout.LayoutParams(0, (48 * dp).toInt(), 1f)
+        cancelLp.marginEnd = gap
+        cancel.layoutParams = cancelLp
+        buttons.addView(cancel)
+        buttons.addView(capture)
+        root.addView(buttons)
+
+        return root
+    }
+
     @SuppressLint("SetJavaScriptEnabled")
     private fun createWebView() {
         val platform = loginPlatform
+        // 开启 WebView 远程调试：便于从 Chrome DevTools 观察平台控制台实际请求的接口
+        // （探测 Kimi/其他平台用量接口时关键；release 可移除）
+        android.webkit.WebView.setWebContentsDebuggingEnabled(true)
         val startUrl = when (platform) {
             PlatformType.MIMO -> "https://platform.xiaomimimo.com/"
             PlatformType.DEEPSEEK -> "https://platform.deepseek.com/"
+            PlatformType.KIMI -> "https://platform.kimi.com/"
             else -> return
         }
 
@@ -126,22 +244,92 @@ class WebLoginActivity : ComponentActivity() {
             cacheMode = WebSettings.LOAD_DEFAULT
             // Chrome 移动端 UA：绕过平台外层 WAF 的浏览器校验，且与 OkHttp 请求头保持一致
             userAgentString = CHROME_MOBILE_UA
+            // 修复 MiMo 登录页"黑屏"：系统深色下 WebView 暗色化(forceDark)会把页面
+            // 强制渲染成纯黑背景（小米账号页尤其明显，视觉等同黑屏）。按 API 分段关闭：
+            // API 33+ 用 algorithmicDarkeningAllowed，API 29-32 用 forceDark。
+            if (android.os.Build.VERSION.SDK_INT >= 33) {
+                isAlgorithmicDarkeningAllowed = false
+            } else if (android.os.Build.VERSION.SDK_INT >= 29) {
+                @Suppress("DEPRECATION")
+                forceDark = WebSettings.FORCE_DARK_OFF
+            }
         }
+        // 画布白底兜底：页面未设背景时露 View 白色而非黑
+        webView.setBackgroundColor(android.graphics.Color.WHITE)
         CookieManager.getInstance().apply {
             setAcceptCookie(true)
             setAcceptThirdPartyCookies(webView, true)
         }
         webView.webViewClient = object : WebViewClient() {
-            override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest) = false
+            override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
+                flog("nav -> ${request.url}")
+                return false
+            }
+
+            override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) {
+                super.onPageStarted(view, url, favicon)
+                flog("start $url")
+            }
 
             override fun onPageFinished(view: WebView, url: String?) {
                 super.onPageFinished(view, url)
+                flog("finish $url")
+                // Kimi：探测页面实际发起的 API 请求（找出控制台用量接口路径）
+                if (loginPlatform == PlatformType.KIMI) {
+                    view.evaluateJavascript(
+                        "(function(){try{var es=performance.getEntriesByType('resource');" +
+                            "return JSON.stringify(es.map(function(e){return e.name.substring(0,120)})" +
+                            ".filter(function(n){return /api|usage|bill|consume|quota|stat/i.test(n)}).slice(0,30));}catch(e){return 'ERR'}})()"
+                    ) { r -> flog("KIMI_PERF $r") }
+                }
                 // SPA 登录成功后可能不发生导航（原地写入 token），轮询兜底；这里再加一拍
                 tryCapture(manual = false)
+            }
+
+            override fun onReceivedError(
+                view: WebView,
+                request: WebResourceRequest,
+                error: android.webkit.WebResourceError
+            ) {
+                super.onReceivedError(view, request, error)
+                android.util.Log.w(
+                    "WatchDogLogin",
+                    "resource-error ${request.url} ${error.description} (code=${error.errorCode}) main=${request.isForMainFrame}"
+                )
+            }
+
+            override fun onReceivedHttpError(
+                view: WebView,
+                request: WebResourceRequest,
+                errorResponse: android.webkit.WebResourceResponse
+            ) {
+                super.onReceivedHttpError(view, request, errorResponse)
+                android.util.Log.w(
+                    "WatchDogLogin",
+                    "http-error ${request.url} status=${errorResponse.statusCode} main=${request.isForMainFrame}"
+                )
+            }
+        }
+        webView.webChromeClient = object : android.webkit.WebChromeClient() {
+            override fun onConsoleMessage(msg: android.webkit.ConsoleMessage): Boolean {
+                flog("console[${msg.messageLevel()}] ${msg.message()} @ ${msg.sourceId()}:${msg.lineNumber()}")
+                return true
+            }
+            override fun onProgressChanged(view: WebView, newProgress: Int) {
+                flog("progress $newProgress")
             }
         }
         webView.loadUrl(startUrl)
         webViewReady = webView
+        // 挂载到布局容器（buildLayout 已先行创建容器）
+        webViewContainer?.apply {
+            val lp = android.view.ViewGroup.LayoutParams(
+                android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                android.view.ViewGroup.LayoutParams.MATCH_PARENT
+            )
+            removeAllViews()
+            addView(webView, lp)
+        }
     }
 
     /** 每 1.5s 检测一次凭证；验证通过即保存并关闭页面。 */
@@ -159,16 +347,127 @@ class WebLoginActivity : ComponentActivity() {
         when (loginPlatform) {
             PlatformType.DEEPSEEK -> captureDeepSeek(manual)
             PlatformType.MIMO -> captureMimo(manual)
+            PlatformType.KIMI -> captureKimi(manual)
             else -> Unit
         }
     }
+
+    // ===== Kimi (Moonshot)：控制台会话凭证未知形态，复用存储扫描 JS 探测，
+    // 页面内 fetch 官方 balance 端点验证会话有效性（控制台 userToken 与 API Key 不同）=====
+
+    // ===== Kimi (Moonshot)：控制台实际域为 platform.kimi.com（非 moonshot.cn）。
+    // 登录后 localStorage 有 token 键（截图实测），控制台数据靠 Cookie 会话，
+    // 因此不做 Bearer 验证——命中页面 token/cookie 即视为会话有效 =====
+
+    private fun captureKimi(manual: Boolean) {
+        val wv = webViewReady ?: run { if (manual) toastNoSession(); return }
+        runCatching {
+            wv.evaluateJavascript(kimiCaptureScript) { raw ->
+                flog("kimi capture raw=${raw?.take(120)} url=${wv.url}")
+                val obj = parseJsObject(raw)
+                flog("kimi parsed obj=${obj?.toString()?.take(120)} tokLen=${obj?.optString("token")?.length} amounts=${obj?.optJSONArray("amounts")?.toString()?.take(150)}")
+                // token 未抓到则存储并提示；已抓到则仅持续采集金额（供用量页导航后读取）
+                if (kimiToken == null && obj != null && obj.optString("token").length > 10) {
+                    kimiToken = obj.optString("token")
+                    kimiCookie = runCatching {
+                        CookieManager.getInstance().getCookie("https://platform.kimi.com")
+                    }.getOrNull()
+                    setStatus(getString(R.string.weblogin_status_captured_kimi))
+                    updateCaptureButton()
+                    // 方案乙验证：页面内 fetch 首页 SSR HTML，检测是否内嵌金额数据
+                    wv.evaluateJavascript(
+                        "(function(){try{return fetch('/').then(function(r){return r.text()}).then(function(t){" +
+                            "return JSON.stringify({len:t.length,hasAmt:/余额|今日消费|本月消费|总消费|amount|balance/i.test(t),hasNext:!!t.match(/__NEXT_DATA__|__next_f/)})" +
+                            "}).catch(function(e){return 'ERR'})}catch(e){return 'ERR'}})()"
+                    ) { r -> flog("KIMI_SSR $r") }
+                }
+                when {
+                    kimiToken == null && obj?.optBoolean("pending") == true ->
+                        setStatus(getString(R.string.weblogin_status_verifying))
+                    kimiToken == null && manual -> {
+                        toastNoSession()
+                        runDiagnostics(wv)
+                    }
+                    kimiToken != null ->
+                        setStatus(getString(R.string.weblogin_status_captured_kimi))
+                }
+            }
+        }.onFailure { if (manual) toastNoSession() }
+    }
+
+    /** Kimi 抓取：platform.kimi.com 域下扫 localStorage/sessionStorage/cookie 找 token。 */
+    private val kimiCaptureScript = """
+        (function(){
+          try{
+            if (location.host !== 'platform.kimi.com' && location.host !== 'platform.moonshot.cn') return null;
+            function ok(t){ return (t && typeof t === 'string' && t.length > 10 && t !== 'null') ? t : null; }
+            function pick(x, allowRaw){
+              if(!x || typeof x !== 'string') return null;
+              try{
+                var v = JSON.parse(x);
+                if(v && typeof v.value === 'string') return ok(v.value);
+                if(typeof v === 'string') return ok(v);
+                return null;
+              }catch(e){
+                return allowRaw ? ok(x) : null;
+              }
+            }
+            function fromStorage(st){
+              try{
+                var t = pick(st.getItem('token'), true);
+                if(t) return t;
+                for(var i=0;i<st.length;i++){
+                  var k = st.key(i), s = st.getItem(k);
+                  if(!s) continue;
+                  var t2 = pick(s, /token|credential|auth/i.test(k || '') || s.length > 20);
+                  if(t2) return t2;
+                }
+              }catch(e){}
+              return null;
+            }
+            function fromCookie(){
+              try{
+                var parts = document.cookie.split(';');
+                for(var i=0;i<parts.length;i++){
+                  var seg = parts[i].trim();
+                  var eq = seg.indexOf('=');
+                  if(eq <= 0) continue;
+                  var k = seg.substring(0, eq);
+                  var v = decodeURIComponent(seg.substring(eq + 1));
+                  var t = pick(v, /token|credential|auth|session/i.test(k) || v.length > 20);
+                  if(t) return t;
+                }
+              }catch(e){}
+              return null;
+            }
+            var token = fromStorage(localStorage) || fromStorage(sessionStorage) || fromCookie();
+            // 同时采集当前页面可见金额文本（¥/￥ + 数字）。SSR 常把金额拆成相邻子元素
+            // （<span>￥</span><span>7.56</span>），故读取父元素合并 textContent 再匹配。
+            var amounts = [];
+            try{
+              var all = document.querySelectorAll('body *');
+              for(var i=0;i<all.length && amounts.length<30;i++){
+                var el = all[i];
+                var txt=(el.textContent||'').trim();
+                // 只对"较薄"节点（文本长度<40，避免一整页）匹配完整金额
+                if(txt.length>0 && txt.length<40 && /^[¥￥]\s?\d{1,3}(,\d{3})*(\.\d+)?$/.test(txt)){
+                  amounts.push(txt);
+                }
+              }
+            }catch(e){}
+            return token ? {token: token, amounts: amounts} : null;
+          }catch(e){ return null; }
+        })()
+    """.trimIndent()
 
     // ===== DeepSeek：页面内扫描候选 token → fetch 验证 → 验证通过才采用 =====
 
     private fun captureDeepSeek(manual: Boolean) {
         val wv = webViewReady ?: run { if (manual) toastNoSession(); return }
         runCatching {
-            wv.evaluateJavascript(JS_DEEPSEEK_CAPTURE) { raw ->
+            wv.evaluateJavascript(
+                buildStorageCaptureScript("platform.deepseek.com", "/api/v0/users/get_user_summary")
+            ) { raw ->
                 android.util.Log.d(
                     "WatchDogLogin",
                     "deepseek capture raw=${raw?.take(80)} url=${wv.url}"
@@ -188,7 +487,7 @@ class WebLoginActivity : ComponentActivity() {
                     }
                     // 异步验证进行中（fetch 结果经 window.__wdResult 两拍中转）
                     obj?.optBoolean("pending") == true -> {
-                        statusText = getString(R.string.weblogin_status_verifying)
+                        setStatus(getString(R.string.weblogin_status_verifying))
                     }
                     else -> {
                         if (manual) {
@@ -233,7 +532,7 @@ class WebLoginActivity : ComponentActivity() {
                         if (manual) toastInvalidSession()
                     }
                     obj?.optBoolean("pending") == true -> {
-                        statusText = getString(R.string.weblogin_status_verifying)
+                        setStatus(getString(R.string.weblogin_status_verifying))
                     }
                     else -> if (manual) {
                         toastNoSession()
@@ -274,13 +573,13 @@ class WebLoginActivity : ComponentActivity() {
         runCatching {
             wv.evaluateJavascript(JS_DIAG_KEYS) { raw ->
                 val obj = parseJsObject(raw) ?: return@evaluateJavascript
-                statusText = getString(
+                setStatus(getString(
                     R.string.weblogin_diag_keys,
                     obj.optString("host").ifBlank { "-" },
                     obj.optString("ls").ifBlank { "-" },
                     obj.optString("ss").ifBlank { "-" },
                     obj.optString("ck").ifBlank { "-" }
-                )
+                ))
             }
         }
     }
@@ -292,7 +591,7 @@ class WebLoginActivity : ComponentActivity() {
             "WatchDogLogin",
             "session captured: token=${token.length}c cookie=${cookie?.length ?: 0}c platform=$loginPlatform"
         )
-        statusText = getString(R.string.weblogin_status_captured)
+        setStatus(getString(R.string.weblogin_status_captured))
         val app = application as WatchDogApplication
         lifecycleScope.launch(Dispatchers.IO) {
             runCatching { app.appContainer.webSessionStore.saveWebSession(loginPlatform, token, cookie) }
@@ -344,98 +643,17 @@ class WebLoginActivity : ComponentActivity() {
         super.onDestroy()
     }
 
-    companion object {
-        const val EXTRA_PLATFORM = "platform"
-
-        /** 登录成功跳回 MainActivity 时携带：要求导航到仪表盘并刷新。 */
-        const val EXTRA_GOTO_DASHBOARD = "goto_dashboard"
-
-        /** 与 PlatformApiService 中 @Headers 的 UA 保持一致（WAF 指纹关联）。 */
-        const val CHROME_MOBILE_UA =
-            "Mozilla/5.0 (Linux; Android 15; Pixel) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
-
-        fun intent(context: Context, platform: PlatformType): Intent =
-            Intent(context, WebLoginActivity::class.java).apply {
-                putExtra(EXTRA_PLATFORM, platform.name)
-            }
-    }
-
-    // ===== UI =====
-
-    @Composable
-    private fun WebLoginContent(
-        platform: PlatformType,
-        status: String,
-        onManualCapture: () -> Unit,
-        onCancel: () -> Unit
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                // edge-to-edge 下避开系统栏；软键盘弹出时整体收缩（配合 adjustResize），
-                // 避免 WebView 被键盘挤压/页面跳动错位
-                .statusBarsPadding()
-                .imePadding()
-                .navigationBarsPadding()
-        ) {
-            Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp)) {
-                Text(
-                    text = stringResource(R.string.weblogin_title, platform.displayName),
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold
-                )
-                Text(
-                    text = stringResource(R.string.weblogin_hint),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                if (status.isNotBlank()) {
-                    Text(
-                        text = status,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.outline,
-                        maxLines = 4,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-            }
-            Box(modifier = Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
-                val wv = webViewReady
-                if (wv != null) {
-                    AndroidView(factory = { wv }, modifier = Modifier.fillMaxSize())
-                } else {
-                    CircularProgressIndicator()
-                }
-            }
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                OutlinedButton(
-                    onClick = onCancel,
-                    modifier = Modifier.weight(1f)
-                ) { Text(stringResource(R.string.action_cancel)) }
-                Button(
-                    onClick = onManualCapture,
-                    modifier = Modifier.weight(1f)
-                ) { Text(stringResource(R.string.weblogin_done)) }
-            }
-        }
-    }
-
-    // ===== 抓取脚本（自研，无参考工程依赖）=====
-
     /**
-     * DeepSeek 凭证抓取（每拍执行一次，幂等状态机）：
-     * - 有已完成的验证结果（window.__wdResult）→ 消费并返回 {token, valid}；
-     * - 退避期（网络异常后 30s 内）→ 返回 null 不发请求；
+     * 通用控制台凭证抓取脚本（DeepSeek / Kimi 复用）：
      * - 三路扫描候选 token（localStorage / sessionStorage / document.cookie），
-     *   兼容 {"value":"..."} JSON 包装与裸字符串；key 含 "token" 或值 eyJ 开头才收裸串；
-     * - 找到未被拉黑的新候选 → 页面内 fetch get_user_summary 验证（异步，Promise 不可
-     *   直接回传，结果写 __wdResult 由下一拍读取），本拍返回 {pending:true}；
-     * - 验证失败（code!=0）→ token 记入页内黑名单 __wdBad，本拍返回 {token, valid:false}。
+     *   兼容 {"value":"..."} JSON 包装与裸字符串；key 含 "token" 或值以 eyJ 开头才收裸串；
+     * - 找到候选后页面内 fetch [verifyPath] 验证（页面内请求天然带 cookie 与浏览器指纹）；
+     *   验证通过才返回 {token, valid:true}。
+     * - 异步 fetch 结果经 window.__wdResult 两拍中转；失败 network 走 30s 退避；
+     *   被 API 拒绝的 token 记入 __wdBad 黑名单。
      */
-    private val JS_DEEPSEEK_CAPTURE = """
+    private fun buildStorageCaptureScript(host: String, verifyPath: String): String {
+        return """
         (function(){
           try{
             if (window.__wdResult) {
@@ -445,7 +663,7 @@ class WebLoginActivity : ComponentActivity() {
             }
             if (window.__wdBusy) return {pending: true};
             if (window.__wdWait && Date.now() < window.__wdWait) return null;
-            if (location.host !== 'platform.deepseek.com') return null;
+            if (location.host !== '$host') return null;
 
             function ok(t){ return (t && typeof t === 'string' && t.length > 20) ? t : null; }
             function pick(x, allowRaw){
@@ -493,11 +711,11 @@ class WebLoginActivity : ComponentActivity() {
             if (!token || window.__wdBad[token]) return null;
 
             window.__wdBusy = true;
-            fetch('/api/v0/users/get_user_summary', {headers: {'Authorization': 'Bearer ' + token}})
+            fetch('$verifyPath', {headers: {'Authorization': 'Bearer ' + token}})
               .then(function(r){ return r.json(); })
               .then(function(j){
                 window.__wdBusy = false;
-                var valid = !!(j && (j.code === 0 || j.data));
+                var valid = !!(j && (j.code === 0 || j.data || j.balance_infos));
                 if (!valid) window.__wdBad[token] = 1;
                 window.__wdResult = {token: token, valid: valid};
               })
@@ -508,7 +726,8 @@ class WebLoginActivity : ComponentActivity() {
             return {pending: true};
           }catch(e){ return null; }
         })()
-    """.trimIndent()
+        """.trimIndent()
+    }
 
     /**
      * MiMo 凭证验证（Cookie 值由 Kotlin 侧从 CookieManager 取得后注入）：
@@ -542,6 +761,24 @@ class WebLoginActivity : ComponentActivity() {
         })()
         """.trimIndent()
     }
+
+    companion object {
+        const val EXTRA_PLATFORM = "platform"
+
+        /** 登录成功跳回 MainActivity 时携带：要求导航到仪表盘并刷新。 */
+        const val EXTRA_GOTO_DASHBOARD = "goto_dashboard"
+
+        /** 与 PlatformApiService 中 @Headers 的 UA 保持一致（WAF 指纹关联）。 */
+        const val CHROME_MOBILE_UA =
+            "Mozilla/5.0 (Linux; Android 15; Pixel) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
+
+        fun intent(context: Context, platform: PlatformType): Intent =
+            Intent(context, WebLoginActivity::class.java).apply {
+                putExtra(EXTRA_PLATFORM, platform.name)
+            }
+    }
+
+    // ===== UI =====
 
     /** 诊断脚本：输出页面域 + localStorage / sessionStorage / cookie 三处键名（不含值）。 */
     private val JS_DIAG_KEYS = """

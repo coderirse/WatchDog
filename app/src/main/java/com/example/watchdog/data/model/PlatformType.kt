@@ -39,7 +39,9 @@ enum class PlatformType(
         initials = "Ki",
         brandColor = Color(0xFF6C4DFF),
         logoUrl = "https://registry.npmmirror.com/@lobehub/icons-static-png/latest/files/dark/moonshot.png",
-        description = "Moonshot/Kimi AI平台"
+        description = "Moonshot/Kimi AI平台",
+        // 可选增强：配置网页控制台会话后可读取真实月度用量明细（需探测）
+        supportsConsoleSession = true
     ),
     GLM(
         displayName = "智谱GLM",

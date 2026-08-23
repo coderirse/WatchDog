@@ -29,6 +29,25 @@ interface GlmApi {
     ): Response<GlmTokenAccountsResponse>
 }
 
+/**
+ * 智谱 Coding Plan 配额接口（cc-switch 等项目实测）：
+ * - GET api/monitor/usage/quota/limit → data.{level, limits[{type, unit(3=5小时/6=周),
+ *   percentage(已用百分比 0-100), nextResetTime(epoch ms)}]}
+ * - 鉴权为 "Authorization: <APIKey>"（智谱特有：不加 Bearer 前缀）
+ * - 余额端点 api/paas/v4/users/me/balance 鉴权方式无公开资料，实现后真机实测
+ */
+interface GlmCodingPlanApi {
+    @GET("api/monitor/usage/quota/limit")
+    suspend fun getQuotaLimit(
+        @Header("Authorization") apiKey: String
+    ): Response<ResponseBody>
+
+    @GET("api/paas/v4/users/me/balance")
+    suspend fun getBalance(
+        @Header("Authorization") apiKey: String
+    ): Response<ResponseBody>
+}
+
 interface SiliconFlowApi {
     @GET("/v1/user/info")
     suspend fun getUserInfo(
@@ -50,6 +69,23 @@ interface KimiCodeApi {
     suspend fun getUsages(
         @Header("Authorization") authorization: String
     ): Response<KimiCodeUsagesResponse>
+}
+
+/**
+ * Kimi 控制台 SSR 页面抓取（方案乙：控制台数据由 Next.js 服务端渲染，无浏览器 XHR 接口，
+ * 数据内嵌在页面 HTML 的 __NEXT_DATA__/self.__next_f 中）。带登录 Cookie 请求首页 HTML，
+ * 由 KimiConsoleParser 从 HTML 内联 JSON 解析余额/消费。
+ */
+interface KimiConsoleApi {
+    @Headers(
+        "Accept: text/html,application/xhtml+xml,*/*",
+        "Accept-Language: zh-CN,zh;q=0.9,en;q=0.8",
+        "User-Agent: Mozilla/5.0 (Linux; Android 15; Pixel) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
+    )
+    @GET("/")
+    suspend fun getConsoleHome(
+        @Header("Cookie") cookie: String
+    ): Response<ResponseBody>
 }
 
 /**

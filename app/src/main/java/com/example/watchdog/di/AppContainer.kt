@@ -7,8 +7,10 @@ import com.example.watchdog.BuildConfig
 import com.example.watchdog.data.api.DeepSeekApi
 import com.example.watchdog.data.api.DeepSeekConsoleApi
 import com.example.watchdog.data.api.GlmApi
+import com.example.watchdog.data.api.GlmCodingPlanApi
 import com.example.watchdog.data.api.KimiApi
 import com.example.watchdog.data.api.KimiCodeApi
+import com.example.watchdog.data.api.KimiConsoleApi
 import com.example.watchdog.data.api.MiMoConsoleApi
 import com.example.watchdog.data.api.SiliconFlowApi
 import com.example.watchdog.data.local.BalanceAlertManager
@@ -49,6 +51,8 @@ class AppContainer(context: Context) {
     val deepSeekApi: DeepSeekApi = createApi("https://api.deepseek.com/")
     val kimiApi: KimiApi = createApi("https://api.moonshot.cn/")
     val glmApi: GlmApi = createApi("https://bigmodel.cn/")
+    // 智谱 Coding Plan 配额接口在 open.bigmodel.cn（与资源包接口不同源）
+    val glmCodingPlanApi: GlmCodingPlanApi = createApi("https://open.bigmodel.cn/")
     val siliconFlowApi: SiliconFlowApi = createApi("https://api.siliconflow.cn/")
     val kimiCodeApi: KimiCodeApi = createApi("https://api.kimi.com/coding/")
 
@@ -57,6 +61,9 @@ class AppContainer(context: Context) {
 
     // DeepSeek 网页控制台内部接口（非官方，鉴权头 Authorization: Bearer userToken + Cookie）
     val deepSeekConsoleApi: DeepSeekConsoleApi = createApi("https://platform.deepseek.com/")
+
+    // Kimi 控制台 SSR 页面抓取（方案乙：解析内嵌 HTML 数据）
+    val kimiConsoleApi: KimiConsoleApi = createApi("https://platform.kimi.com/")
 
     private inline fun <reified T> createApi(baseUrl: String): T {
         return Retrofit.Builder()
@@ -94,8 +101,10 @@ class AppContainer(context: Context) {
         deepSeekApi = deepSeekApi,
         kimiApi = kimiApi,
         glmApi = glmApi,
+        glmCodingPlanApi = glmCodingPlanApi,
         siliconFlowApi = siliconFlowApi,
         kimiCodeApi = kimiCodeApi,
+        kimiConsoleApi = kimiConsoleApi,
         mimoConsoleApi = mimoConsoleApi,
         deepSeekConsoleApi = deepSeekConsoleApi,
         webSessionStore = webSessionStore

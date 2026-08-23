@@ -4,9 +4,14 @@ import com.example.watchdog.data.api.DeepSeekApi
 import com.example.watchdog.data.api.DeepSeekConsoleApi
 import com.example.watchdog.data.api.DeepSeekConsoleParser
 import com.example.watchdog.data.api.GlmApi
+import com.example.watchdog.data.api.GlmCodingPlanApi
+import com.example.watchdog.data.api.GlmCodingPlanParser
+import com.example.watchdog.data.api.GlmTokenAccountsResponse
 import com.example.watchdog.data.api.KimiApi
 import com.example.watchdog.data.api.KimiCodeApi
 import com.example.watchdog.data.api.KimiCodeParser
+import com.example.watchdog.data.api.KimiConsoleApi
+import com.example.watchdog.data.api.KimiConsoleParser
 import com.example.watchdog.data.api.MiMoConsoleApi
 import com.example.watchdog.data.api.MiMoConsoleParser
 import com.example.watchdog.data.api.SiliconFlowApi
@@ -16,6 +21,7 @@ import com.example.watchdog.data.local.WebSessionStore
 import com.example.watchdog.data.model.ModelUsage
 import com.example.watchdog.data.model.PlatformType
 import com.example.watchdog.data.model.QuotaInfo
+import com.example.watchdog.data.model.QuotaWindow
 import com.example.watchdog.util.FormatUtils
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -29,14 +35,25 @@ class QuotaRepository(
     private val deepSeekApi: DeepSeekApi,
     private val kimiApi: KimiApi,
     private val glmApi: GlmApi,
+    private val glmCodingPlanApi: GlmCodingPlanApi,
     private val siliconFlowApi: SiliconFlowApi,
     private val kimiCodeApi: KimiCodeApi,
+    private val kimiConsoleApi: KimiConsoleApi,
     private val mimoConsoleApi: MiMoConsoleApi,
     private val deepSeekConsoleApi: DeepSeekConsoleApi,
     private val webSessionStore: WebSessionStore
 ) {
     suspend fun fetchAllQuotas(): List<QuotaInfo> = coroutineScope {
-        val configuredPlatforms = settingsStore.getConfiguredPlatforms()
+        val configuredPlatforms = settingsStore.getConfiguredPlatforms().toMutableSet()
+        // 支持网页会话的平台：即使未填 API Key，只要配置了会话（能读控制台数据）也算已配置，
+        // 否则登录了控制台但没填 API Key 的平台会整卡消失（真机实测：DeepSeek 登录后仪表盘空白）
+        for (platform in PlatformType.entries) {
+            if (platform.supportsConsoleSession &&
+                runCatching { webSessionStore.hasWebSession(platform) }.getOrDefault(false)
+            ) {
+                configuredPlatforms.add(platform)
+            }
+        }
         val allPlatforms = PlatformType.entries
 
         allPlatforms.map { platform ->
@@ -53,16 +70,21 @@ class QuotaRepository(
     suspend fun fetchPlatformQuota(platform: PlatformType): QuotaInfo {
         return try {
             val apiKey = settingsStore.getApiKey(platform)
-            if (apiKey == null) return QuotaInfo.notConfigured(platform)
-            val authHeader = "Bearer $apiKey"
-
+            val authHeader = apiKey?.let { "Bearer $it" }
             val rawQuota = when (platform) {
-                PlatformType.DEEPSEEK -> fetchDeepSeek(authHeader, platform)
-                PlatformType.KIMI -> fetchKimiBalance(authHeader, platform)
-                PlatformType.GLM -> fetchGlmTokenAccounts(authHeader, platform)
-                PlatformType.SILICONFLOW -> fetchSiliconFlow(authHeader, platform)
+                PlatformType.DEEPSEEK ->
+                    if (authHeader != null) fetchDeepSeek(authHeader, platform)
+                    else fetchDeepSeekConsoleOnly(platform)
+                PlatformType.KIMI ->
+                    if (authHeader != null) fetchKimiBalance(authHeader, platform)
+                    else fetchKimiConsoleSession(platform)
+                PlatformType.GLM -> authHeader?.let { fetchGlmTokenAccounts(it, platform) }
+                    ?: QuotaInfo.notConfigured(platform)
+                PlatformType.SILICONFLOW -> authHeader?.let { fetchSiliconFlow(it, platform) }
+                    ?: QuotaInfo.notConfigured(platform)
                 PlatformType.VOLCENGINE_ARK -> fetchVolcengineArk(platform)
-                PlatformType.KIMI_CODE -> fetchKimiCodeUsages(authHeader, platform)
+                PlatformType.KIMI_CODE -> authHeader?.let { fetchKimiCodeUsages(it, platform) }
+                    ?: QuotaInfo.notConfigured(platform)
                 PlatformType.MIMO -> fetchMimoConsole(platform)
             }
 
@@ -162,6 +184,33 @@ class QuotaRepository(
         val monthlyUsage: Double?,
         val modelUsages: List<ModelUsage>
     )
+
+    /**
+     * DeepSeek 无 API Key 时的控制台-only 数据源：余额与用量均来自网页控制台
+     * （getUserSummary 即含余额钱包 + 按模型用量）。会话缺失/失效则回退 notConfigured。
+     */
+    private suspend fun fetchDeepSeekConsoleOnly(platform: PlatformType): QuotaInfo {
+        val session = runCatching { webSessionStore.getWebSession(platform) }.getOrNull()
+        if (session.isNullOrBlank()) return QuotaInfo.notConfigured(platform)
+        val cookie = runCatching { webSessionStore.getWebSessionCookie(platform) }.getOrNull()
+        val console = runCatching { fetchDeepSeekConsole(session, cookie) }.getOrNull()
+        val data = console?.data
+            ?: return QuotaInfo.notConfigured(platform)
+        val wallet = data.summary?.primaryBalance
+        val currency = wallet?.currency?.takeIf { it.isNotBlank() } ?: "CNY"
+        return QuotaInfo(
+            platform = platform,
+            isAvailable = wallet != null,
+            isConfigured = true,
+            totalBalance = wallet?.let { String.format(Locale.US, "%.2f", it.balance) } ?: "0.00",
+            currency = currency,
+            monthlyUsage = data.monthlyUsage?.let {
+                if (it < 0.01) "0.00" else String.format(Locale.US, "%.2f", it)
+            } ?: "0.00",
+            modelUsages = data.modelUsages,
+            dataSourceLabel = "网页控制台"
+        )
+    }
 
     private data class DeepSeekConsoleResult(
         val data: DeepSeekConsoleData?,
@@ -278,12 +327,96 @@ class QuotaRepository(
         )
     }
 
+    // ===== Kimi 无 API Key 但有网页会话：用 Cookie 请求控制台 SSR HTML，解析余额/消费 =====
+
+    private suspend fun fetchKimiConsoleSession(platform: PlatformType): QuotaInfo {
+        val cookie = runCatching { webSessionStore.getWebSessionCookie(platform) }.getOrNull()
+        if (cookie.isNullOrBlank()) {
+            // 无 Cookie 但有会话 token：显示"已连接"占位，避免误报未配置
+            val hasSession = runCatching { webSessionStore.hasWebSession(platform) }.getOrDefault(false)
+            if (!hasSession) return QuotaInfo.notConfigured(platform)
+            return QuotaInfo(
+                platform = platform, isAvailable = true, isConfigured = true,
+                totalBalance = "0.00", currency = "CNY", dataSourceLabel = "网页控制台",
+                boosterInfo = "已连接控制台会话，用量明细待接入"
+            )
+        }
+        // 用 Cookie 请求 SSR HTML，解析内嵌金额
+        val result = runCatching {
+            val resp = kimiConsoleApi.getConsoleHome(cookie)
+            if (!resp.isSuccessful) return@runCatching null
+            KimiConsoleParser.parse(resp.body()?.string())
+        }.getOrNull()
+            ?: return QuotaInfo(
+                platform = platform, isAvailable = true, isConfigured = true,
+                totalBalance = "0.00", currency = "CNY", dataSourceLabel = "网页控制台",
+                boosterInfo = "控制台已连接，数据解析中"
+            )
+        val balance = result.balance ?: "0.00"
+        val monthCost = result.monthCost ?: result.totalCost
+        return QuotaInfo(
+            platform = platform,
+            isAvailable = true,
+            isConfigured = true,
+            totalBalance = balance,
+            monthlyUsage = monthCost ?: "0.00",
+            currency = "CNY",
+            dataSourceLabel = "网页控制台",
+            modelUsages = emptyList(),
+            boosterInfo = result.totalCost?.let { "累计消费 ¥$it" }
+        )
+    }
+
     // ===== GLM =====
 
     private suspend fun fetchGlmTokenAccounts(authHeader: String, platform: PlatformType): QuotaInfo {
         val response = glmApi.getTokenAccounts(authHeader)
         if (!response.isSuccessful) return httpError(platform, response.code())
         val body = response.body() ?: return QuotaInfo.error(platform, "响应为空")
+
+        val base = buildGlmResourceQuota(body, platform)
+
+        // 叠加 Coding Plan 订阅配额（可选增强）：GLM 用户的 API Key 可能同时有
+        // 按量资源包与 Coding Plan 套餐，两者独立展示。Coding Plan 配额接口鉴权
+        // 为 "Authorization: <APIKey>"（不加 Bearer），与资源包接口不同。
+        val apiKey = runCatching {
+            authHeader.removePrefix("Bearer ").trim()
+        }.getOrNull()
+        if (apiKey.isNullOrBlank()) return base
+        val plan = runCatching { glmCodingPlanApi.getQuotaLimit(apiKey) }.getOrNull()
+        if (plan != null && plan.isSuccessful) {
+            val planBody = plan.body()?.string()
+            val result = planBody?.let(GlmCodingPlanParser::parse)
+            if (result != null && result.success) {
+                val quotaWindows = result.windows.mapNotNull { w ->
+                    val usedPercent = w.usedPercent ?: return@mapNotNull null
+                    // percentage 为已用百分比，换算 remaining/limit（limit 基准 100）
+                    val remaining = (100.0 - usedPercent).coerceIn(0.0, 100.0)
+                    QuotaWindow(
+                        name = w.name,
+                        used = usedPercent,
+                        remaining = remaining,
+                        limit = 100.0,
+                        resetTime = w.nextResetTime,
+                        expiresAt = null
+                    )
+                }
+                if (quotaWindows.isNotEmpty() || result.planName != null) {
+                    return base.copy(
+                        planName = result.planName,
+                        quotaWindows = quotaWindows,
+                        boosterInfo = null,
+                        // 有 Coding Plan 时该卡以订阅模式展示，monthlyUsage/limit 不作为余额语义
+                        currency = if (base.currency == "Tokens") "额度" else base.currency
+                    )
+                }
+            }
+        }
+        return base
+    }
+
+    /** 解析 GLM 官方资源包（按量余额）为 QuotaInfo。 */
+    private fun buildGlmResourceQuota(body: GlmTokenAccountsResponse, platform: PlatformType): QuotaInfo {
         val allRows = body.rows ?: emptyList()
         // 优先统计有效期内资源包（status=EFFECTIVE）；接口不返回 status 时不过滤
         val effectiveRows = allRows.filter { it.status == null || it.status.equals("EFFECTIVE", true) }

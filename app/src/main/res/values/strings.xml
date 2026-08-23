@@ -146,6 +146,8 @@
     <string name="weblogin_status_loading">正在加载 %1$s 登录页…</string>
     <string name="weblogin_status_verifying">已找到凭证，正在验证有效性…</string>
     <string name="weblogin_status_captured">凭证验证通过，正在返回…</string>
+    <string name="weblogin_status_captured_kimi">会话已连接。可先在页面中查看用量，完成后点下方按钮返回</string>
+    <string name="weblogin_done_kimi">完成并返回</string>
     <string name="weblogin_done">读取凭证</string>
     <string name="weblogin_success_toast">已保存 %1$s 会话，即将刷新数据</string>
     <string name="weblogin_no_session_toast">尚未检测到登录凭证，请先在页面中完成登录</string>
