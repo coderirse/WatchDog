@@ -13,6 +13,36 @@ data class ModelUsage(
 )
 
 /**
+ * 某一天的按平台消耗数据（"每日消耗"趋势卡片的数据源）。
+ * 来自 DeepSeek 控制台 usage/cost|amount 接口的 days[]（按天）。
+ */
+data class DailyUsage(
+    val date: String,          // "2026-08-23"
+    val platform: PlatformType,
+    val totalTokens: Long = 0,
+    val inputTokens: Long = 0,
+    val outputTokens: Long = 0,
+    val requests: Long = 0,
+    val cost: Double = 0.0
+)
+
+/**
+ * 某天某模型的按天消耗（"Token 用量统计"卡片按模型筛选/柱状图的数据源）。
+ * 来自 DeepSeek 控制台 usage/cost|amount 接口的 days[].data[].model（按模型 × 按天）。
+ * [inputTokens] 为真实输入量 = prompt + cacheHit + cacheMiss。
+ */
+data class DailyModelUsage(
+    val date: String,          // "2026-08-23"
+    val platform: PlatformType,
+    val model: String,
+    val totalTokens: Long = 0,
+    val inputTokens: Long = 0,
+    val outputTokens: Long = 0,
+    val requests: Long = 0,
+    val cost: Double = 0.0
+)
+
+/**
  * 订阅配额窗口（订阅制平台专用，如 Kimi Code 的 5小时/周/月 窗口）。
  * 所有字段可空：接口未实测，任何字段缺失都不影响其余字段展示。
  */
@@ -44,6 +74,8 @@ data class QuotaInfo(
     val availableBalance: String? = null,
     val errorMessage: String? = null,
     val modelUsages: List<ModelUsage> = emptyList(),  // 按模型用量明细
+    val dailyUsage: List<DailyUsage> = emptyList(),   // 按天消耗（趋势卡片数据源）
+    val dailyModelUsage: List<DailyModelUsage> = emptyList(),  // 按模型 × 按天（Token 用量统计卡片数据源）
     val lastUpdated: Long = System.currentTimeMillis(),
     val isStale: Boolean = false,  // true 表示该数据来自本地缓存（离线回退）
     // ===== 以下为新增字段，均有默认值，不影响既有构造与缓存反序列化 =====

@@ -31,12 +31,25 @@
     <string name="hero_platform_stats">%1$d 个平台 · %2$d 正常 %3$d 异常</string>
     <string name="hero_last_refresh">上次刷新 %1$s</string>
 
-    <!-- 余额趋势 -->
-    <string name="trend_title">余额趋势</string>
-    <string name="trend_empty">至少需要两次余额变化才会显示趋势</string>
-    <string name="trend_latest">最近 ¥%1$s</string>
-    <string name="trend_min">最低 ¥%1$s</string>
-    <string name="trend_max">最高 ¥%1$s</string>
+    <!-- Token 用量统计 -->
+    <string name="daily_usage_title">Token 用量统计</string>
+    <string name="daily_usage_empty">暂无 Token 用量数据（配置 DeepSeek 网页会话后可查看）</string>
+    <string name="daily_usage_latest">最近消耗</string>
+    <string name="daily_usage_requests">请求数</string>
+    <string name="daily_usage_cost">成本</string>
+    <string name="daily_usage_all">全部</string>
+    <string name="daily_usage_range_7d">近7天</string>
+    <string name="daily_usage_range_30d">近30天</string>
+    <string name="daily_usage_range_all">全部</string>
+    <string name="daily_usage_metric_total">总Tokens</string>
+    <string name="daily_usage_metric_input">输入</string>
+    <string name="daily_usage_metric_output">输出</string>
+    <string name="daily_usage_metric_requests">请求数</string>
+    <string name="daily_usage_metric_cost">成本</string>
+    <string name="daily_usage_model">模型</string>
+    <string name="daily_usage_source">来源</string>
+    <string name="daily_usage_tap_hint">点击柱子查看当日明细</string>
+    <string name="daily_usage_day_detail">当日明细</string>
 
     <!-- 额度卡片 -->
     <string name="status_normal">正常</string>
@@ -67,7 +80,7 @@
     <string name="quota_model_row_label">%1$s Tokens · %2$s次</string>
     <string name="quota_updated_at">更新: %1$s</string>
     <string name="usage_hint_deepseek">DeepSeek 未开放官方用量查询接口。\n在设置中配置网页会话令牌后，可读取网页控制台的按模型调用明细（platform.deepseek.com → Usage）。</string>
-    <string name="usage_hint_kimi">Kimi 未开放用量查询接口，无法获取按模型调用明细。\n如需查看，请登录 platform.moonshot.cn → 费用明细。</string>
+    <string name="usage_hint_kimi">Kimi 控制台暂未提供按模型的用量明细。\n如需查看，可登录 platform.kimi.com 的控制台查看费用明细。</string>
     <string name="usage_hint_glm">GLM 资源包数据暂未解析到模型明细。\n如需查看，请登录 open.bigmodel.cn → 费用中心。</string>
     <string name="usage_hint_siliconflow">硅基流动未开放用量查询接口，无法获取按模型调用明细。\n如需查看，请登录 siliconflow.cn → 费用账单。</string>
     <string name="usage_hint_volcengine">火山方舟无余额查询接口，余额为本地估算（基于手动填写的初始余额）。\n如需准确数据，请登录火山引擎控制台 → 费用中心。</string>

@@ -284,4 +284,187 @@ object DeepSeekConsoleParser {
 
     private fun JsonObject.strOrNull(name: String): String? =
         get(name)?.takeIf { it.isJsonPrimitive }?.takeIf { it.asJsonPrimitive.isString }?.asString
+
+    // ===== 按天（daily）解析：月度接口 biz_data[].days[]，含每日各指标 =====
+
+    /** 某一天的各 token/成本指标。cost 端点（[costMode]=true）下由 cost 字段填金额。 */
+    data class DailyRow(
+        val date: String,
+        val requests: Long = 0,
+        val inputTokens: Long = 0,
+        val cacheHit: Long = 0,
+        val cacheMiss: Long = 0,
+        val outputTokens: Long = 0,
+        val cost: Double = 0.0
+    ) {
+        val totalTokens: Long get() = inputTokens + outputTokens
+    }
+
+    /**
+     * 解析月度接口 biz_data[].days[]（按天，全模型聚合）。每项结构（真机实测）：
+     * {date: "2026-08-23", data: [ { model, usage: [ {type, amount} ] }, ... ]}
+     * 兼容对象形态 biz_data.days。biz_code 非零或结构异常返回 null。
+     *
+     * 输入语义：真机实测 PROMPT_TOKEN 恒为 0，真实输入量在 PROMPT_CACHE_HIT_TOKEN
+     * 与 PROMPT_CACHE_MISS_TOKEN，故 [DailyRow.inputTokens] = prompt + hit + miss。
+     */
+    fun parseMonthlyDays(text: String?, costMode: Boolean): List<DailyRow>? {
+        val root = parseJson(text)?.takeIf { it.isJsonObject }?.asJsonObject ?: return null
+        val data = root.get("data")?.takeIf { it.isJsonObject }?.asJsonObject ?: return null
+        val bizCode = data.get("biz_code")?.takeIf { it.isJsonPrimitive }
+            ?.let { runCatching { it.asInt }.getOrNull() } ?: 0
+        if (bizCode != 0) return null
+        val bizEl = data.get("biz_data") ?: return null
+        val days: List<JsonElement> = when {
+            bizEl.isJsonArray -> bizEl.asJsonArray
+                .mapNotNull { (it as? JsonObject)?.let { o -> asArray(o, "days") } }
+                .flatten()
+            bizEl.isJsonObject -> asArray(bizEl.asJsonObject, "days") ?: return null
+            else -> return null
+        }
+        if (days.isEmpty()) return null
+
+        val rows = days.mapNotNull { el ->
+            val d = el as? JsonObject ?: return@mapNotNull null
+            val date = d.strOrNull("date") ?: return@mapNotNull null
+            var r = DailyRow(date)
+            // days 项内 usage 有两种形态：直接 usage[]（部分端点）或 data[].usage[]
+            val usages = buildList {
+                asArray(d, "usage")?.let { addAll(it) }
+                asArray(d, "data")?.forEach { item ->
+                    (item as? JsonObject)?.let { o -> asArray(o, "usage")?.let { addAll(it) } }
+                }
+            }
+            for (u in usages) {
+                val uo = u as? JsonObject ?: continue
+                val type = uo.strOrNull("type") ?: continue
+                val amount = uo.strOrNull("amount")?.toDoubleOrNull()
+                    ?: (uo.get("amount")?.takeIf { it.isJsonPrimitive }?.asDouble) ?: continue
+                r = when (type) {
+                    "REQUEST" -> r.copy(requests = r.requests + amount.toLong())
+                    "PROMPT_TOKEN" -> if (costMode) r.copy(cost = r.cost + amount)
+                        else r.copy(inputTokens = r.inputTokens + amount.toLong())
+                    "PROMPT_CACHE_HIT_TOKEN" -> if (costMode) r.copy(cost = r.cost + amount)
+                        else r.copy(cacheHit = r.cacheHit + amount.toLong())
+                    "PROMPT_CACHE_MISS_TOKEN" -> if (costMode) r.copy(cost = r.cost + amount)
+                        else r.copy(cacheMiss = r.cacheMiss + amount.toLong())
+                    "RESPONSE_TOKEN" -> if (costMode) r.copy(cost = r.cost + amount)
+                        else r.copy(outputTokens = r.outputTokens + amount.toLong())
+                    else -> r
+                }
+            }
+            // 归一化：输入 = 未缓存 + 缓存命中 + 缓存未命中（costMode 下三者均为 0）
+            if (!costMode) r = r.copy(inputTokens = r.inputTokens + r.cacheHit + r.cacheMiss)
+            r
+        }
+        return rows.ifEmpty { null }
+    }
+
+    // ===== 按模型 × 按天（daily-by-model）解析：月度接口 biz_data[].days[].data[].model =====
+
+    /**
+     * 某一天某模型的各 token/成本指标。输入 = prompt + hit + miss（真实输入量）。
+     * cost 端点（[costMode]=true）下 amount 为 CNY 金额，累入 [cost]。
+     */
+    data class DailyModelRow(
+        val date: String,
+        val model: String,
+        val requests: Long = 0,
+        val inputTokens: Long = 0,
+        val cacheHit: Long = 0,
+        val cacheMiss: Long = 0,
+        val outputTokens: Long = 0,
+        val cost: Double = 0.0
+    ) {
+        val totalTokens: Long get() = inputTokens + outputTokens
+    }
+
+    /**
+     * 解析月度接口 biz_data[].days[].data[].model（按模型 × 按天）。
+     * 真机实测（2026-08）：amount 端点 biz_data 为对象 {total, days}，days[].data[] 每项
+     * {model, usage:[{type, amount}]}；cost 端点 biz_data 为数组（按币种分组），结构相同，
+     * amount 为货币金额。biz_code 非零或结构异常返回 null。
+     */
+    fun parseMonthlyDaysByModel(text: String?, costMode: Boolean): List<DailyModelRow>? {
+        val root = parseJson(text)?.takeIf { it.isJsonObject }?.asJsonObject ?: return null
+        val data = root.get("data")?.takeIf { it.isJsonObject }?.asJsonObject ?: return null
+        val bizCode = data.get("biz_code")?.takeIf { it.isJsonPrimitive }
+            ?.let { runCatching { it.asInt }.getOrNull() } ?: 0
+        if (bizCode != 0) return null
+        val bizEl = data.get("biz_data") ?: return null
+        val days: List<JsonElement> = when {
+            bizEl.isJsonArray -> bizEl.asJsonArray
+                .mapNotNull { (it as? JsonObject)?.let { o -> asArray(o, "days") } }
+                .flatten()
+            bizEl.isJsonObject -> asArray(bizEl.asJsonObject, "days") ?: return null
+            else -> return null
+        }
+        if (days.isEmpty()) return null
+
+        val rows = days.mapNotNull { el ->
+            val d = el as? JsonObject ?: return@mapNotNull null
+            val date = d.strOrNull("date") ?: return@mapNotNull null
+            // data[] 每项 {model, usage[]}（真机实测每项均带 model）
+            val dataArr = asArray(d, "data") ?: return@mapNotNull null
+            val perModel = dataArr.mapNotNull { item ->
+                val io = item as? JsonObject ?: return@mapNotNull null
+                val model = io.strOrNull("model") ?: return@mapNotNull null
+                val usage = io.get("usage")?.takeIf { it.isJsonArray }?.asJsonArray ?: return@mapNotNull null
+                var r = DailyModelRow(date, model)
+                for (u in usage) {
+                    val uo = u as? JsonObject ?: continue
+                    val type = uo.strOrNull("type") ?: continue
+                    val amount = uo.strOrNull("amount")?.toDoubleOrNull()
+                        ?: (uo.get("amount")?.takeIf { it.isJsonPrimitive }?.asDouble) ?: continue
+                    r = when (type) {
+                        "REQUEST" -> r.copy(requests = r.requests + amount.toLong())
+                        "PROMPT_TOKEN" -> if (costMode) r.copy(cost = r.cost + amount)
+                            else r.copy(inputTokens = r.inputTokens + amount.toLong())
+                        "PROMPT_CACHE_HIT_TOKEN" -> if (costMode) r.copy(cost = r.cost + amount)
+                            else r.copy(cacheHit = r.cacheHit + amount.toLong())
+                        "PROMPT_CACHE_MISS_TOKEN" -> if (costMode) r.copy(cost = r.cost + amount)
+                            else r.copy(cacheMiss = r.cacheMiss + amount.toLong())
+                        "RESPONSE_TOKEN" -> if (costMode) r.copy(cost = r.cost + amount)
+                            else r.copy(outputTokens = r.outputTokens + amount.toLong())
+                        else -> r
+                    }
+                }
+                // 归一化：输入 = prompt + hit + miss（costMode 下三者均为 0）
+                if (!costMode) r = r.copy(inputTokens = r.inputTokens + r.cacheHit + r.cacheMiss)
+                r
+            }
+            // 同日同模型（少见：多分组重复）聚合求和
+            perModel.groupBy { it.model }.map { (model, rs) ->
+                rs.reduce { a, b ->
+                    DailyModelRow(
+                        date = date,
+                        model = model,
+                        requests = a.requests + b.requests,
+                        inputTokens = a.inputTokens + b.inputTokens,
+                        cacheHit = a.cacheHit + b.cacheHit,
+                        cacheMiss = a.cacheMiss + b.cacheMiss,
+                        outputTokens = a.outputTokens + b.outputTokens,
+                        cost = a.cost + b.cost
+                    )
+                }
+            }
+        }.flatten()
+
+        // 跨 biz_data 分组（币种/账户）时同名模型同天再聚合一次
+        val merged = rows.groupBy { it.date + "|" + it.model }.map { (_, rs) ->
+            rs.reduce { a, b ->
+                DailyModelRow(
+                    date = a.date,
+                    model = a.model,
+                    requests = a.requests + b.requests,
+                    inputTokens = a.inputTokens + b.inputTokens,
+                    cacheHit = a.cacheHit + b.cacheHit,
+                    cacheMiss = a.cacheMiss + b.cacheMiss,
+                    outputTokens = a.outputTokens + b.outputTokens,
+                    cost = a.cost + b.cost
+                )
+            }
+        }
+        return merged.sortedBy { it.date }.ifEmpty { null }
+    }
 }

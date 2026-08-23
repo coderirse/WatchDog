@@ -57,11 +57,12 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.watchdog.R
 import com.example.watchdog.di.LocalAppContainer
 import com.example.watchdog.data.model.BalanceSnapshot
+import com.example.watchdog.data.model.DailyModelUsage
 import com.example.watchdog.data.model.PlatformType
 import com.example.watchdog.data.model.QuotaInfo
 import com.example.watchdog.data.model.QuotaState
 import com.example.watchdog.data.model.sumCnyBalance
-import com.example.watchdog.ui.components.BalanceTrendCard
+import com.example.watchdog.ui.components.DailyUsageCard
 import com.example.watchdog.ui.components.PlatformQuotaCard
 import com.example.watchdog.ui.theme.WatchDogTheme
 import com.example.watchdog.ui.theme.balanceNumeral
@@ -84,7 +85,6 @@ fun DashboardScreen(
     val isRefreshing by viewModel.isRefreshing.collectAsState()
     val isOffline by viewModel.isOffline.collectAsState()
     val autoRefreshInterval by viewModel.autoRefreshInterval.collectAsState()
-    val balanceHistory by viewModel.balanceHistory.collectAsState()
     val lifecycleOwner = LocalLifecycleOwner.current
     val context = LocalContext.current
 
@@ -123,7 +123,6 @@ fun DashboardScreen(
         isRefreshing = isRefreshing,
         isOffline = isOffline,
         autoRefreshInterval = autoRefreshInterval,
-        balanceHistory = balanceHistory,
         onRefresh = { viewModel.refresh() },
         onNavigateToSettings = onNavigateToSettings,
         onRelogin = { platform ->
@@ -139,7 +138,6 @@ fun DashboardContent(
     isRefreshing: Boolean,
     isOffline: Boolean,
     autoRefreshInterval: Int,
-    balanceHistory: List<BalanceSnapshot>,
     onRefresh: () -> Unit,
     onNavigateToSettings: () -> Unit,
     onRelogin: (PlatformType) -> Unit = {}
@@ -189,7 +187,7 @@ fun DashboardContent(
                     quotas = state.quotas,
                     autoRefreshInterval = autoRefreshInterval,
                     showOfflineBanner = isOffline,
-                    balanceHistory = balanceHistory,
+                    dailyModelUsage = state.quotas.flatMap { it.dailyModelUsage },
                     onNavigateToSettings = onNavigateToSettings,
                     onRelogin = onRelogin
                 )
@@ -197,7 +195,7 @@ fun DashboardContent(
                     quotas = state.quotas,
                     autoRefreshInterval = autoRefreshInterval,
                     showOfflineBanner = isOffline,
-                    balanceHistory = balanceHistory,
+                    dailyModelUsage = state.quotas.flatMap { it.dailyModelUsage },
                     onNavigateToSettings = onNavigateToSettings,
                     onRelogin = onRelogin
                 )
@@ -298,7 +296,7 @@ private fun QuotaListOrEmpty(
     quotas: List<QuotaInfo>,
     autoRefreshInterval: Int,
     showOfflineBanner: Boolean,
-    balanceHistory: List<BalanceSnapshot>,
+    dailyModelUsage: List<DailyModelUsage>,
     onNavigateToSettings: () -> Unit,
     onRelogin: (PlatformType) -> Unit = {}
 ) {
@@ -320,8 +318,8 @@ private fun QuotaListOrEmpty(
             HeroOverviewCard(quotas = quotas)
         }
 
-        item(key = "balance_trend") {
-            BalanceTrendCard(history = balanceHistory)
+        item(key = "daily_usage") {
+            DailyUsageCard(usages = dailyModelUsage)
         }
 
         items(quotas, key = { it.platform.name }) { quota ->
@@ -487,7 +485,6 @@ private fun DashboardPreviewContent() {
         isRefreshing = false,
         isOffline = false,
         autoRefreshInterval = 5,
-        balanceHistory = emptyList(),
         onRefresh = {},
         onNavigateToSettings = {}
     )

@@ -18,6 +18,8 @@ import com.example.watchdog.data.api.SiliconFlowApi
 import com.example.watchdog.data.local.QuotaCacheStore
 import com.example.watchdog.data.local.SettingsStore
 import com.example.watchdog.data.local.WebSessionStore
+import com.example.watchdog.data.model.DailyModelUsage
+import com.example.watchdog.data.model.DailyUsage
 import com.example.watchdog.data.model.ModelUsage
 import com.example.watchdog.data.model.PlatformType
 import com.example.watchdog.data.model.QuotaInfo
@@ -157,7 +159,7 @@ class QuotaRepository(
         }
 
         val cookie = runCatching { webSessionStore.getWebSessionCookie(platform) }.getOrNull()
-        val console = runCatching { fetchDeepSeekConsole(session, cookie) }.getOrNull()
+        val console = runCatching { fetchDeepSeekConsole(session, cookie, platform) }.getOrNull()
         // 已配置会话但控制台抓取失败：回退官方模式，并在卡片标注诊断码
         // （区分 WAF 拦截 429 / 接口变更 404 / 会话失效 401，便于定位）
         val consoleData = console?.data
@@ -175,6 +177,8 @@ class QuotaRepository(
                 if (it < 0.01) "0.00" else String.format(Locale.US, "%.2f", it)
             } ?: base.monthlyUsage,
             modelUsages = consoleData.modelUsages,
+            dailyUsage = consoleData.dailyUsage,
+            dailyModelUsage = consoleData.dailyModelUsage,
             dataSourceLabel = "网页控制台"
         )
     }
@@ -182,7 +186,9 @@ class QuotaRepository(
     private data class DeepSeekConsoleData(
         val summary: DeepSeekConsoleParser.UserSummary?,
         val monthlyUsage: Double?,
-        val modelUsages: List<ModelUsage>
+        val modelUsages: List<ModelUsage>,
+        val dailyUsage: List<DailyUsage> = emptyList(),
+        val dailyModelUsage: List<DailyModelUsage> = emptyList()
     )
 
     /**
@@ -193,7 +199,7 @@ class QuotaRepository(
         val session = runCatching { webSessionStore.getWebSession(platform) }.getOrNull()
         if (session.isNullOrBlank()) return QuotaInfo.notConfigured(platform)
         val cookie = runCatching { webSessionStore.getWebSessionCookie(platform) }.getOrNull()
-        val console = runCatching { fetchDeepSeekConsole(session, cookie) }.getOrNull()
+        val console = runCatching { fetchDeepSeekConsole(session, cookie, platform) }.getOrNull()
         val data = console?.data
             ?: return QuotaInfo.notConfigured(platform)
         val wallet = data.summary?.primaryBalance
@@ -208,6 +214,8 @@ class QuotaRepository(
                 if (it < 0.01) "0.00" else String.format(Locale.US, "%.2f", it)
             } ?: "0.00",
             modelUsages = data.modelUsages,
+            dailyUsage = data.dailyUsage,
+            dailyModelUsage = data.dailyModelUsage,
             dataSourceLabel = "网页控制台"
         )
     }
@@ -224,7 +232,7 @@ class QuotaRepository(
      * start/end/tz 参数已失效（2026-08 真机实测 INVALID_PARAM）。
      * 请求携带登录时的 Cookie（WAF 指纹关联），解析不到任何数据时返回 data=null + 各路 HTTP 码。
      */
-    private suspend fun fetchDeepSeekConsole(session: String, cookie: String?): DeepSeekConsoleResult {
+    private suspend fun fetchDeepSeekConsole(session: String, cookie: String?, platform: PlatformType): DeepSeekConsoleResult {
         val authHeader = "Bearer $session"
         val cal = Calendar.getInstance()
         val month = cal.get(Calendar.MONTH) + 1
@@ -261,10 +269,19 @@ class QuotaRepository(
         val costRows = costBody?.let { DeepSeekConsoleParser.parseMonthlyTotals(it, costMode = true) }
         val amountRows = amountBody?.let { DeepSeekConsoleParser.parseMonthlyTotals(it, costMode = false) }
         val modelUsages = buildMonthlyModelUsages(costRows, amountRows)
+        // 按天消耗：amount 端点提供 token/请求，cost 端点提供金额，按 date 合并
+        val dayAmount = amountBody?.let { DeepSeekConsoleParser.parseMonthlyDays(it, costMode = false) }
+        val dayCost = costBody?.let { DeepSeekConsoleParser.parseMonthlyDays(it, costMode = true) }
+        val dailyUsage = buildDailyUsage(dayAmount, dayCost, platform)
+        // 按模型 × 按天：amount/cost 端点 days[].data[] 每项带 model（真机实测）
+        val dayModelAmount = amountBody?.let { DeepSeekConsoleParser.parseMonthlyDaysByModel(it, costMode = false) }
+        val dayModelCost = costBody?.let { DeepSeekConsoleParser.parseMonthlyDaysByModel(it, costMode = true) }
+        val dailyModelUsage = buildDailyModelUsage(dayModelAmount, dayModelCost, platform)
         android.util.Log.i(
             "WatchDogRepo",
             "DeepSeek console parsed: summary=${summary != null} costRows=${costRows?.size} " +
-                "amountRows=${amountRows?.size} models=${modelUsages.size}"
+                "amountRows=${amountRows?.size} models=${modelUsages.size} days=${dailyUsage.size} " +
+                "modelDays=${dailyModelUsage.size}"
         )
 
         if (summary == null && costRows == null && amountRows == null) {
@@ -279,10 +296,60 @@ class QuotaRepository(
             DeepSeekConsoleData(
                 summary = summary,
                 monthlyUsage = monthlyUsage,
-                modelUsages = modelUsages
+                modelUsages = modelUsages,
+                dailyUsage = dailyUsage,
+                dailyModelUsage = dailyModelUsage
             ),
             codes
         )
+    }
+
+    /** 合并 amount/cost 按模型×按天数据为 DailyModelUsage 列表（按 date+model 对齐）。 */
+    private fun buildDailyModelUsage(
+        amountRows: List<DeepSeekConsoleParser.DailyModelRow>?,
+        costRows: List<DeepSeekConsoleParser.DailyModelRow>?,
+        platform: PlatformType
+    ): List<DailyModelUsage> {
+        val costByKey = costRows?.associate { "${it.date}|${it.model}" to it.cost } ?: emptyMap()
+        val keys = (amountRows?.map { "${it.date}|${it.model}" } ?: emptyList()).distinct().sorted()
+        return keys.map { key ->
+            val sep = key.indexOf('|')
+            val date = key.substring(0, sep)
+            val model = key.substring(sep + 1)
+            val a = amountRows?.firstOrNull { it.date == date && it.model == model }
+            DailyModelUsage(
+                date = date,
+                platform = platform,
+                model = model,
+                totalTokens = a?.totalTokens ?: 0,
+                inputTokens = a?.inputTokens ?: 0,
+                outputTokens = a?.outputTokens ?: 0,
+                requests = a?.requests ?: 0,
+                cost = costByKey[key] ?: 0.0
+            )
+        }
+    }
+
+    /** 合并 amount/cost 按天数据为 DailyUsage 列表（按 date 对齐，token 来自 amount、成本来自 cost）。 */
+    private fun buildDailyUsage(
+        amountDays: List<DeepSeekConsoleParser.DailyRow>?,
+        costDays: List<DeepSeekConsoleParser.DailyRow>?,
+        platform: PlatformType
+    ): List<DailyUsage> {
+        val costByDate = costDays?.associate { it.date to it.cost } ?: emptyMap()
+        val dates = (amountDays?.map { it.date } ?: emptyList()).distinct().sorted()
+        return dates.map { date ->
+            val a = amountDays?.firstOrNull { it.date == date }
+            DailyUsage(
+                date = date,
+                platform = platform,
+                totalTokens = a?.totalTokens ?: 0,
+                inputTokens = a?.inputTokens ?: 0,
+                outputTokens = a?.outputTokens ?: 0,
+                requests = a?.requests ?: 0,
+                cost = costByDate[date] ?: 0.0
+            )
+        }
     }
 
     /** 合并月度 cost/amount 接口为按模型明细：amount 提供 Token/请求数，cost 提供金额。 */

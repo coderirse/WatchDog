@@ -451,19 +451,15 @@ class WebLoginActivity : ComponentActivity() {
               return null;
             }
             var token = fromStorage(localStorage) || fromStorage(sessionStorage) || fromCookie();
-            // 采集结构化金额：按标签(余额/今日/本月/总消费)就近匹配金额。
-            // Kimi 主页 SSR/dom 中标签与金额相邻，金额可能是 7.56019 形式（无￥前缀）
-            // 或 <span>￥</span><span>7.56</span> 拆分。用容器的合并 textContent 匹配。
+            // 采集结构化金额：定位「标签文本」元素，取其所在行的容器（标签+紧邻数值）。
+            // 不用整棵父级拍平文本——那样会跨指标串位（today 误匹配到 balance）。
             var balance = null, today = null, month = null, total = null;
-            function pickAmount(text, keywords){
-              for(var i=0;i<keywords.length;i++){
-                var idx = text.indexOf(keywords[i]);
-                if(idx < 0) continue;
-                var tail = text.substring(idx, idx + 40);
-                var m = tail.match(/\d{1,3}(?:,\d{3})*(?:\.\d{1,6})/);
-                if(m) return m[0];
-              }
-              return null;
+            function grabNumber(container){
+              if(!container) return null;
+              // 在容器里优先取「￥/¥ 后或独立数字」形如 7.56019 / 1.73004 的值（含小数）
+              var txt = (container.textContent||'').replace(/[￥¥]/g, ' ');
+              var m = txt.match(/\d{1,3}(?:,\d{3})*(?:\.\d{1,6})/);
+              return m ? m[0] : null;
             }
             try{
               var all = document.querySelectorAll('body *');
@@ -472,13 +468,16 @@ class WebLoginActivity : ComponentActivity() {
                 if(el.children && el.children.length>0) continue;
                 var t = (el.textContent||'').trim();
                 if(!t) continue;
-                // 优先取含标签的父容器文本（标签+金额常在同一行容器）
-                var par = el.parentElement;
-                var pt = par ? (par.textContent||'').trim() : '';
-                if(!balance) balance = pickAmount(pt, ['余额','账户余额','可用余额']);
-                if(!today) today = pickAmount(pt, ['今日消费','今日消耗','今日已用']);
-                if(!month) month = pickAmount(pt, ['本月消费','本月消耗','本月已用','本月支出']);
-                if(!total) total = pickAmount(pt, ['总消费','累计消费','总消耗','累计消耗']);
+                var container = el.parentElement;
+                if(/余额|账户余额|可用余额/.test(t) && !balance) {
+                  balance = grabNumber(container);
+                } else if(/今日消费|今日消耗|今日已用/.test(t) && !today) {
+                  today = grabNumber(container);
+                } else if(/本月消费|本月消耗|本月已用|本月支出/.test(t) && !month) {
+                  month = grabNumber(container);
+                } else if(/总消费|累计消费|总消耗|累计消耗/.test(t) && !total) {
+                  total = grabNumber(container);
+                }
                 if(balance && today && month && total) break;
               }
             }catch(e){}
