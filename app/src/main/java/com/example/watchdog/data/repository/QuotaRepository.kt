@@ -1,5 +1,6 @@
 package com.example.watchdog.data.repository
 
+import com.example.watchdog.BuildConfig
 import com.example.watchdog.data.api.DeepSeekApi
 import com.example.watchdog.data.api.DeepSeekConsoleApi
 import com.example.watchdog.data.api.DeepSeekConsoleParser
@@ -154,7 +155,7 @@ class QuotaRepository(
         // 会话仍有效时无需再次输入账号）。
         val session = runCatching { webSessionStore.getWebSession(platform) }.getOrNull()
         if (session.isNullOrBlank()) {
-            android.util.Log.d("WatchDogRepo", "DeepSeek: no console session, official-only")
+            if (BuildConfig.DEBUG) android.util.Log.d("WatchDogRepo", "DeepSeek: no console session, official-only")
             return base
         }
 
@@ -249,21 +250,24 @@ class QuotaRepository(
             Triple(s.await(), c.await(), a.await())
         }
         val codes = listOf(summaryResp, costResp, amountResp).mapNotNull { it?.code() }
-        // 先读出响应体再解析：body 只能消费一次，顺带打日志供真机诊断
+        // 先读出响应体再解析：body 只能消费一次；诊断日志仅 debug 构建输出
+        // （响应体含账户余额/用量等私有数据，release 严禁写入 logcat）
         val summaryBody = summaryResp?.takeIf { it.isSuccessful }?.body()?.string()
         val costBody = costResp?.takeIf { it.isSuccessful }?.body()?.string()
         val amountBody = amountResp?.takeIf { it.isSuccessful }?.body()?.string()
-        android.util.Log.i(
-            "WatchDogRepo",
-            "DeepSeek console codes=$codes session=${session.length}c cookie=${cookie?.length ?: 0}c month=$month/$year"
-        )
-        listOf("summary" to summaryBody, "cost" to costBody, "amount" to amountBody)
-            .forEach { (name, body) ->
-                android.util.Log.i(
-                    "WatchDogRepo",
-                    "DeepSeek console[$name] len=${body?.length ?: -1} body=${body?.take(400)?.replace('\n', ' ') ?: "<empty>"}"
-                )
-            }
+        if (BuildConfig.DEBUG) {
+            android.util.Log.i(
+                "WatchDogRepo",
+                "DeepSeek console codes=$codes session=${session.length}c cookie=${cookie?.length ?: 0}c month=$month/$year"
+            )
+            listOf("summary" to summaryBody, "cost" to costBody, "amount" to amountBody)
+                .forEach { (name, body) ->
+                    android.util.Log.i(
+                        "WatchDogRepo",
+                        "DeepSeek console[$name] len=${body?.length ?: -1} body=${body?.take(400)?.replace('\n', ' ') ?: "<empty>"}"
+                    )
+                }
+        }
 
         val summary = summaryBody?.let(DeepSeekConsoleParser::parseUserSummary)
         val costRows = costBody?.let { DeepSeekConsoleParser.parseMonthlyTotals(it, costMode = true) }
@@ -277,12 +281,14 @@ class QuotaRepository(
         val dayModelAmount = amountBody?.let { DeepSeekConsoleParser.parseMonthlyDaysByModel(it, costMode = false) }
         val dayModelCost = costBody?.let { DeepSeekConsoleParser.parseMonthlyDaysByModel(it, costMode = true) }
         val dailyModelUsage = buildDailyModelUsage(dayModelAmount, dayModelCost, platform)
-        android.util.Log.i(
-            "WatchDogRepo",
-            "DeepSeek console parsed: summary=${summary != null} costRows=${costRows?.size} " +
-                "amountRows=${amountRows?.size} models=${modelUsages.size} days=${dailyUsage.size} " +
-                "modelDays=${dailyModelUsage.size}"
-        )
+        if (BuildConfig.DEBUG) {
+            android.util.Log.i(
+                "WatchDogRepo",
+                "DeepSeek console parsed: summary=${summary != null} costRows=${costRows?.size} " +
+                    "amountRows=${amountRows?.size} models=${modelUsages.size} days=${dailyUsage.size} " +
+                    "modelDays=${dailyModelUsage.size}"
+            )
+        }
 
         if (summary == null && costRows == null && amountRows == null) {
             return DeepSeekConsoleResult(null, codes)
@@ -425,7 +431,7 @@ class QuotaRepository(
             val resp = kimiConsoleApi.getConsoleHome(cookie)
             if (!resp.isSuccessful) return@runCatching null
             val html = resp.body()?.string()
-            android.util.Log.i("WatchDogRepo", "kimi SSR htmlLen=${html?.length ?: -1}")
+            if (BuildConfig.DEBUG) android.util.Log.i("WatchDogRepo", "kimi SSR htmlLen=${html?.length ?: -1}")
             KimiConsoleParser.parse(html)
         }.getOrNull()
             ?: return QuotaInfo(

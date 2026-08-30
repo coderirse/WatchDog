@@ -1,8 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-   额度缓存（watchdog_cache）也包含余额等敏感数据，一并排除。
+   敏感数据全部排除出云备份：
+   - watchdog_settings.xml：API Key（Keystore 加密）+ 设置
+   - watchdog_cache.xml：额度缓存（含余额）
+   - watchdog_web_sessions.xml：网页控制台会话凭证（token/Cookie，最高敏感级）
+   - watchdog_history.xml：余额历史快照
+   - watchdog_alert_state.xml：预警状态
 -->
 <full-backup-content>
     <exclude domain="sharedpref" path="watchdog_settings.xml"/>
     <exclude domain="sharedpref" path="watchdog_cache.xml"/>
+    <exclude domain="sharedpref" path="watchdog_web_sessions.xml"/>
+    <exclude domain="sharedpref" path="watchdog_history.xml"/>
+    <exclude domain="sharedpref" path="watchdog_alert_state.xml"/>
 </full-backup-content>

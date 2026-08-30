@@ -1,14 +1,22 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-   API Key 与额度缓存均排除出云备份和换机迁移，避免敏感数据离开设备。
+   API Key、网页会话凭证与额度/历史数据均排除出云备份和换机迁移，避免敏感数据离开设备。
+   Keystore 密钥本身不可导出，加密数据即使被备份也无法在新设备解密，但明文降级场景
+   （SecureCipher 回退）下会泄露，故一律排除。
 -->
 <data-extraction-rules>
     <cloud-backup>
         <exclude domain="sharedpref" path="watchdog_settings.xml"/>
         <exclude domain="sharedpref" path="watchdog_cache.xml"/>
+        <exclude domain="sharedpref" path="watchdog_web_sessions.xml"/>
+        <exclude domain="sharedpref" path="watchdog_history.xml"/>
+        <exclude domain="sharedpref" path="watchdog_alert_state.xml"/>
     </cloud-backup>
     <device-transfer>
         <exclude domain="sharedpref" path="watchdog_settings.xml"/>
         <exclude domain="sharedpref" path="watchdog_cache.xml"/>
+        <exclude domain="sharedpref" path="watchdog_web_sessions.xml"/>
+        <exclude domain="sharedpref" path="watchdog_history.xml"/>
+        <exclude domain="sharedpref" path="watchdog_alert_state.xml"/>
     </device-transfer>
 </data-extraction-rules>

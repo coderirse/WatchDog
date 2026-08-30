@@ -38,6 +38,8 @@ object SecureCipher {
                 .put(iv)
                 .put(encrypted)
                 .array()
+            // 本次成功：清除降级标记（避免一次失败后永久显示"明文存储"告警）
+            lastDegraded = false
             ENCRYPTED_PREFIX + Base64.encodeToString(payload, Base64.NO_WRAP)
         } catch (e: Exception) {
             // Keystore 不可用时回退明文存储，避免用户被锁在门外（极少发生）。

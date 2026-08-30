@@ -66,17 +66,25 @@ class WebLoginActivity : ComponentActivity() {
     private var kimiCookie: String? = null
     private var captureButton: Button? = null
 
-    /** 调试日志直写文件（logcat 在部分 ROM 上会卡死/丢日志，adb pull 读取更可靠）。 */
+    /** 调试日志（仅 debug 构建）：直写文件（logcat 在部分 ROM 上会卡死/丢日志）。 */
     private fun flog(msg: String) {
+        if (!com.example.watchdog.BuildConfig.DEBUG) return
         android.util.Log.i("WatchDogLogin", msg)
         runCatching {
             val f = java.io.File(cacheDir, "weblogin_debug.log")
+            // 每次进入登录页先清掉上次会话的残留日志，避免历史凭证线索长期驻留
+            if (!debugLogTruncated) {
+                f.delete()
+                debugLogTruncated = true
+            }
             f.appendText(
                 java.text.SimpleDateFormat("HH:mm:ss.SSS", java.util.Locale.US)
                     .format(java.util.Date()) + " " + msg + "\n"
             )
         }
     }
+
+    private var debugLogTruncated = false
 
     override fun attachBaseContext(newBase: Context) {
         // 暂不干预 uiMode：实测强制日间上下文会让小米登录 SPA 卡在"__page_loading"
@@ -226,9 +234,12 @@ class WebLoginActivity : ComponentActivity() {
     @SuppressLint("SetJavaScriptEnabled")
     private fun createWebView() {
         val platform = loginPlatform
-        // 开启 WebView 远程调试：便于从 Chrome DevTools 观察平台控制台实际请求的接口
-        // （探测 Kimi/其他平台用量接口时关键；release 可移除）
-        android.webkit.WebView.setWebContentsDebuggingEnabled(true)
+        // 仅 debug 构建开启 WebView 远程调试（便于 DevTools 观察平台接口请求）。
+        // release 严禁开启：否则任何拿到设备的人可通过 USB DevTools 读取登录页
+        // localStorage/Cookie 中的会话凭证（P0 安全）。
+        if (com.example.watchdog.BuildConfig.DEBUG) {
+            android.webkit.WebView.setWebContentsDebuggingEnabled(true)
+        }
         val startUrl = when (platform) {
             PlatformType.MIMO -> "https://platform.xiaomimimo.com/"
             PlatformType.DEEPSEEK -> "https://platform.deepseek.com/"
@@ -494,10 +505,12 @@ class WebLoginActivity : ComponentActivity() {
             wv.evaluateJavascript(
                 buildStorageCaptureScript("platform.deepseek.com", "/api/v0/users/get_user_summary")
             ) { raw ->
-                android.util.Log.d(
-                    "WatchDogLogin",
-                    "deepseek capture raw=${raw?.take(80)} url=${wv.url}"
-                )
+                if (com.example.watchdog.BuildConfig.DEBUG) {
+                    android.util.Log.d(
+                        "WatchDogLogin",
+                        "deepseek capture raw=${raw?.take(80)} url=${wv.url}"
+                    )
+                }
                 val obj = parseJsObject(raw)
                 when {
                     // 验证通过的凭证：保存整串 Cookie（WAF 指纹）并回主界面
@@ -613,10 +626,12 @@ class WebLoginActivity : ComponentActivity() {
     private fun finishWithSession(token: String, cookie: String?) {
         if (finished || isFinishing) return
         finished = true
-        android.util.Log.d(
-            "WatchDogLogin",
-            "session captured: token=${token.length}c cookie=${cookie?.length ?: 0}c platform=$loginPlatform"
-        )
+        if (com.example.watchdog.BuildConfig.DEBUG) {
+            android.util.Log.d(
+                "WatchDogLogin",
+                "session captured: token=${token.length}c cookie=${cookie?.length ?: 0}c platform=$loginPlatform"
+            )
+        }
         setStatus(getString(R.string.weblogin_status_captured))
         val app = application as WatchDogApplication
         lifecycleScope.launch(Dispatchers.IO) {
