@@ -2,7 +2,6 @@ package io.github.coderirse.watchdog.data.api
 
 import com.google.gson.JsonElement
 import com.google.gson.JsonObject
-import com.google.gson.JsonParser
 
 /**
  * 智谱 GLM Coding Plan 配额接口（GET open.bigmodel.cn/api/monitor/usage/quota/limit）防御性解析。
@@ -36,7 +35,7 @@ object GlmCodingPlanParser {
     )
 
     fun parse(text: String?): Result {
-        val root = parseJson(text)
+        val root = JsonExt.parseJson(text)
             ?.takeIf { it.isJsonObject }
             ?.asJsonObject ?: return fail("响应不是有效 JSON")
         // 业务级错误：success=false
@@ -79,10 +78,6 @@ object GlmCodingPlanParser {
     }
 
     private fun fail(msg: String): Result = Result(null, emptyList(), false, msg)
-
-    /** 解 {data:{biz_data:{...}}}，此处 GLM 直接用 data，无 biz_data 层。 */
-    private fun parseJson(text: String?): JsonElement? =
-        text?.let { runCatching { JsonParser().parse(it) }.getOrNull() }
 
     private fun JsonObject.strOr(name: String): String? =
         get(name)?.takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isString }?.asString

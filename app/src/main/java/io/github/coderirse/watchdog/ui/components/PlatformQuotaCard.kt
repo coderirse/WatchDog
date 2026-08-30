@@ -137,8 +137,8 @@ private fun BrandQuotaCard(q: QuotaInfo, modifier: Modifier = Modifier) {
 
     val brush: Brush = when {
         depleted -> depletedBrush
-        low -> warningBlendBrush(q.platform.brandColor)
-        else -> brandBrush(q.platform.brandColor)
+        low -> warningBlendBrush(q.platform.visual.brandColor)
+        else -> brandBrush(q.platform.visual.brandColor)
     }
     val statusText = when {
         estimatePending -> stringResource(R.string.status_estimate)

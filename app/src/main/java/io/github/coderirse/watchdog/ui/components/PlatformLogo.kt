@@ -33,8 +33,8 @@ fun PlatformLogo(
     platform: PlatformType,
     modifier: Modifier = Modifier,
     size: Int = 36,
-    backgroundColor: androidx.compose.ui.graphics.Color = platform.brandColor.copy(alpha = 0.12f),
-    initialsColor: androidx.compose.ui.graphics.Color = platform.brandColor
+    backgroundColor: androidx.compose.ui.graphics.Color = platform.visual.brandColor.copy(alpha = 0.12f),
+    initialsColor: androidx.compose.ui.graphics.Color = platform.visual.brandColor
 ) {
     val isPreview = LocalInspectionMode.current
 
@@ -47,12 +47,12 @@ fun PlatformLogo(
     ) {
         if (isPreview) {
             // 预览模式：直接显示缩写
-            LogoInitials(platform.initials, initialsColor, size)
+            LogoInitials(platform.visual.initials, initialsColor, size)
         } else {
             // 生产模式：网络加载Logo，失败回退缩写
             SubcomposeAsyncImage(
                 model = ImageRequest.Builder(LocalContext.current)
-                    .data(platform.logoUrl)
+                    .data(platform.visual.logoUrl)
                     .crossfade(true)
                     .build(),
                 contentDescription = platform.displayName,
@@ -61,17 +61,17 @@ fun PlatformLogo(
             ) {
                 when (painter.state) {
                     is AsyncImagePainter.State.Loading -> {
-                        LogoInitials(platform.initials, initialsColor, size)
+                        LogoInitials(platform.visual.initials, initialsColor, size)
                     }
                     is AsyncImagePainter.State.Error -> {
-                        LogoInitials(platform.initials, initialsColor, size)
+                        LogoInitials(platform.visual.initials, initialsColor, size)
                     }
                     is AsyncImagePainter.State.Success -> {
                         // 加载成功，只显示Logo（不显示缩写）
                         SubcomposeAsyncImageContent()
                     }
                     else -> {
-                        LogoInitials(platform.initials, initialsColor, size)
+                        LogoInitials(platform.visual.initials, initialsColor, size)
                     }
                 }
             }

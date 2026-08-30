@@ -19,6 +19,13 @@ import io.github.coderirse.watchdog.data.local.QuotaCacheStore
 import io.github.coderirse.watchdog.data.local.SettingsStore
 import io.github.coderirse.watchdog.data.local.WebSessionStore
 import io.github.coderirse.watchdog.data.repository.QuotaRepository
+import io.github.coderirse.watchdog.data.repository.providers.DeepSeekProvider
+import io.github.coderirse.watchdog.data.repository.providers.GlmProvider
+import io.github.coderirse.watchdog.data.repository.providers.KimiCodeProvider
+import io.github.coderirse.watchdog.data.repository.providers.KimiProvider
+import io.github.coderirse.watchdog.data.repository.providers.MiMoProvider
+import io.github.coderirse.watchdog.data.repository.providers.SiliconFlowProvider
+import io.github.coderirse.watchdog.data.repository.providers.VolcengineArkProvider
 import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Retrofit
@@ -32,7 +39,10 @@ class AppContainer(context: Context) {
 
     // OkHttp
     private val loggingInterceptor = HttpLoggingInterceptor().apply {
+        // 各数据源的鉴权头一律脱敏（官方 API 用 Authorization，控制台接口用 Cookie / api-platform_ph）
         redactHeader("Authorization")
+        redactHeader("Cookie")
+        redactHeader("api-platform_ph")
         level = if (BuildConfig.DEBUG) {
             HttpLoggingInterceptor.Level.BASIC
         } else {
@@ -94,20 +104,20 @@ class AppContainer(context: Context) {
     // 网页控制台会话凭证（爬取数据源，由 WebLoginActivity 网页登录后自动抓取）
     val webSessionStore: WebSessionStore = WebSessionStore(context.applicationContext)
 
-    // Repository
+    // Repository：编排层 + 各平台 Provider（新增平台 = 新增一个 Provider 并在此注册）
     val quotaRepository: QuotaRepository = QuotaRepository(
         settingsStore = settingsStore,
         cacheStore = quotaCacheStore,
-        deepSeekApi = deepSeekApi,
-        kimiApi = kimiApi,
-        glmApi = glmApi,
-        glmCodingPlanApi = glmCodingPlanApi,
-        siliconFlowApi = siliconFlowApi,
-        kimiCodeApi = kimiCodeApi,
-        kimiConsoleApi = kimiConsoleApi,
-        mimoConsoleApi = mimoConsoleApi,
-        deepSeekConsoleApi = deepSeekConsoleApi,
-        webSessionStore = webSessionStore
+        webSessionStore = webSessionStore,
+        providers = listOf(
+            DeepSeekProvider(deepSeekApi, deepSeekConsoleApi, webSessionStore, settingsStore),
+            KimiProvider(kimiApi, kimiConsoleApi, webSessionStore, settingsStore),
+            GlmProvider(glmApi, glmCodingPlanApi, settingsStore),
+            SiliconFlowProvider(siliconFlowApi, settingsStore),
+            VolcengineArkProvider(settingsStore),
+            KimiCodeProvider(kimiCodeApi, settingsStore),
+            MiMoProvider(mimoConsoleApi, webSessionStore, settingsStore)
+        )
     )
 
     // 余额低水位预警

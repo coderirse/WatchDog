@@ -2,7 +2,6 @@ package io.github.coderirse.watchdog.data.api
 
 import io.github.coderirse.watchdog.data.model.QuotaWindow
 import com.google.gson.JsonElement
-import java.text.SimpleDateFormat
 import java.util.Locale
 
 /**
@@ -102,49 +101,12 @@ object KimiCodeParser {
         }.getOrNull()
     }
 
-    /** 数值兜底解析：数字或数字字符串。 */
-    fun toDoubleOrNull(el: JsonElement?): Double? {
-        if (el == null || el.isJsonNull || !el.isJsonPrimitive) return null
-        return runCatching {
-            val p = el.asJsonPrimitive
-            if (p.isNumber) p.asDouble else p.asString.toDoubleOrNull()
-        }.getOrNull()
-    }
+    /** 数值兜底解析：委托共享工具 [JsonExt]（保留公开入口供测试与旧调用方使用）。 */
+    fun toDoubleOrNull(el: JsonElement?): Double? = JsonExt.toDoubleOrNull(el)
 
-    /** 时间兜底解析：epoch 秒/毫秒数字或 ISO-8601 字符串，统一返回 epoch millis。 */
-    fun toEpochMillisOrNull(el: JsonElement?): Long? {
-        if (el == null || el.isJsonNull || !el.isJsonPrimitive) return null
-        return runCatching {
-            val p = el.asJsonPrimitive
-            if (p.isNumber) {
-                val v = p.asLong
-                // 小于 1e12 视为秒级时间戳
-                if (v < 1_000_000_000_000L) v * 1000 else v
-            } else {
-                val s = p.asString
-                s.toLongOrNull()?.let { v -> return@runCatching if (v < 1_000_000_000_000L) v * 1000 else v }
-                parseIso8601(s)
-                    ?: runCatching {
-                        SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).parse(s)?.time
-                    }.getOrNull()
-            }
-        }.getOrNull()
-    }
+    /** 时间兜底解析：委托共享工具 [JsonExt]。 */
+    fun toEpochMillisOrNull(el: JsonElement?): Long? = JsonExt.toEpochMillisOrNull(el)
 
-    /** ISO-8601 解析（如 2024-01-01T00:00:00Z / 带毫秒 / 带时区偏移），minSdk 24 兼容，不用 java.time。 */
-    fun parseIso8601(s: String): Long? {
-        val patterns = listOf(
-            "yyyy-MM-dd'T'HH:mm:ss.SSSXXX",
-            "yyyy-MM-dd'T'HH:mm:ssXXX"
-        )
-        for (pattern in patterns) {
-            val parsed = runCatching {
-                SimpleDateFormat(pattern, Locale.US).apply {
-                    isLenient = false
-                }.parse(s)?.time
-            }.getOrNull()
-            if (parsed != null) return parsed
-        }
-        return null
-    }
+    /** ISO-8601 解析：委托共享工具 [JsonExt]。 */
+    fun parseIso8601(s: String): Long? = JsonExt.parseIso8601(s)
 }

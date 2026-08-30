@@ -86,12 +86,6 @@ class WebLoginActivity : ComponentActivity() {
 
     private var debugLogTruncated = false
 
-    override fun attachBaseContext(newBase: Context) {
-        // 暂不干预 uiMode：实测强制日间上下文会让小米登录 SPA 卡在"__page_loading"
-        // （rules=12、docH=0，等 20s 不消失）。日间/深色由系统决定，交给页面自身处理。
-        super.attachBaseContext(newBase)
-    }
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         loginPlatform = intent.getStringExtra(EXTRA_PLATFORM)

@@ -1,6 +1,5 @@
 package io.github.coderirse.watchdog.ui.more
 
-import android.app.Application
 import android.content.Intent
 import android.content.res.Configuration
 import android.net.Uri
@@ -70,8 +69,7 @@ private val openSourceLibs = listOf(
 @Composable
 fun MoreScreen() {
     val context = LocalContext.current
-    val viewModelFactory = remember { MoreViewModel.factory(context.applicationContext as Application) }
-    val viewModel: MoreViewModel = viewModel(factory = viewModelFactory)
+    val viewModel: MoreViewModel = viewModel()
     val state by viewModel.uiState.collectAsState()
 
     MoreContent(

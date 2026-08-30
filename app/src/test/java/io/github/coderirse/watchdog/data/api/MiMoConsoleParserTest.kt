@@ -123,12 +123,11 @@ class MiMoConsoleParserTest {
 
     @Test
     fun findNumber_stringOrNumeric() {
-        @Suppress("DEPRECATION")
-        val o = com.google.gson.JsonParser().parse("""{"a":"3.5","b":4,"c":null}""")
+        val o = com.google.gson.JsonParser.parseString("""{"a":"3.5","b":4,"c":null}""")
             .asJsonObject
-        assertEquals(3.5, MiMoConsoleParser.findNumber(o, listOf("a"))!!, 0.001)
-        assertEquals(4.0, MiMoConsoleParser.findNumber(o, listOf("b"))!!, 0.001)
-        assertNull(MiMoConsoleParser.findNumber(o, listOf("c")))
-        assertNull(MiMoConsoleParser.findNumber(o, listOf("missing")))
+        assertEquals(3.5, JsonExt.findNumber(o, listOf("a"))!!, 0.001)
+        assertEquals(4.0, JsonExt.findNumber(o, listOf("b"))!!, 0.001)
+        assertNull(JsonExt.findNumber(o, listOf("c")))
+        assertNull(JsonExt.findNumber(o, listOf("missing")))
     }
 }

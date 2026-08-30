@@ -2,7 +2,6 @@ package io.github.coderirse.watchdog.ui.more
 
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
-import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import io.github.coderirse.watchdog.util.VersionUtils
 import kotlinx.coroutines.Dispatchers
@@ -83,14 +82,5 @@ class MoreViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    companion object {
-        fun factory(application: Application): ViewModelProvider.Factory {
-            return object : ViewModelProvider.Factory {
-                @Suppress("UNCHECKED_CAST")
-                override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T {
-                    return MoreViewModel(application) as T
-                }
-            }
-        }
-    }
+    // AndroidViewModel 由默认工厂（CreationExtras.Application）直接构造，无需自定义 Factory
 }

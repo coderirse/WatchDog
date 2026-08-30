@@ -159,7 +159,7 @@ fun DailyUsageCard(usages: List<DailyModelUsage>, modifier: Modifier = Modifier)
                     modifier = Modifier.fillMaxWidth()
                 )
                 selectedDate?.let { date ->
-                    SelectedDayDetail(date, byDate[date].orEmpty(), platforms)
+                    SelectedDayDetail(date, byDate[date].orEmpty())
                 }
             }
         }
@@ -200,7 +200,7 @@ private fun PlatformChip(
 ) {
     val label = platform?.displayName ?: stringResource(R.string.daily_usage_all)
     val selected = (platform == null && current == null) || (platform != null && current == platform)
-    val color = if (platform == null) MaterialTheme.colorScheme.primary else platform.brandColor
+    val color = if (platform == null) MaterialTheme.colorScheme.primary else platform.visual.brandColor
     Box(
         modifier = Modifier
             .clip(RoundedCornerShape(50))
@@ -400,7 +400,7 @@ private fun DrawScope.textLabel(date: String?, x: Float, y: Float) {
 
 /** 选中某天的明细展示（该天该来源/模型下的各指标）。 */
 @Composable
-private fun SelectedDayDetail(date: String, dayUsages: List<DailyModelUsage>, _platforms: List<PlatformType>) {
+private fun SelectedDayDetail(date: String, dayUsages: List<DailyModelUsage>) {
     HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
     Column(modifier = Modifier.fillMaxWidth()) {
         Text(

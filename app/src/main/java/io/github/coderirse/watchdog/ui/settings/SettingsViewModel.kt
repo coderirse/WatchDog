@@ -3,6 +3,8 @@ package io.github.coderirse.watchdog.ui.settings
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import androidx.lifecycle.viewmodel.initializer
+import androidx.lifecycle.viewmodel.viewModelFactory
 import io.github.coderirse.watchdog.di.AppContainer
 import io.github.coderirse.watchdog.data.local.SettingsStore
 import io.github.coderirse.watchdog.data.model.PlatformType
@@ -196,11 +198,8 @@ class SettingsViewModel(
     }
 
     companion object {
-        fun factory(container: AppContainer): ViewModelProvider.Factory = object : ViewModelProvider.Factory {
-            @Suppress("UNCHECKED_CAST")
-            override fun <T : ViewModel> create(modelClass: Class<T>): T {
-                return SettingsViewModel(container) as T
-            }
+        fun factory(container: AppContainer): ViewModelProvider.Factory = viewModelFactory {
+            initializer { SettingsViewModel(container) }
         }
     }
 }

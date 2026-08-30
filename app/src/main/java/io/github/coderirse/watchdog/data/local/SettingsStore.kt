@@ -9,13 +9,12 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 class SettingsStore(
-    private val context: Context
+    context: Context
 ) {
-    private val prefs: SharedPreferences
-        get() = context.applicationContext.getSharedPreferences(
-            "watchdog_settings",
-            Context.MODE_PRIVATE
-        )
+    private val prefs: SharedPreferences = context.applicationContext.getSharedPreferences(
+        "watchdog_settings",
+        Context.MODE_PRIVATE
+    )
 
     suspend fun saveApiKey(platform: PlatformType, apiKey: String) {
         withContext(Dispatchers.IO) {
@@ -70,30 +69,12 @@ class SettingsStore(
         }
     }
 
-    private fun getApiKeyKey(platform: PlatformType): String {
-        return when (platform) {
-            PlatformType.DEEPSEEK -> "deepseek_api_key"
-            PlatformType.KIMI -> "kimi_api_key"
-            PlatformType.GLM -> "glm_api_key"
-            PlatformType.SILICONFLOW -> "siliconflow_api_key"
-            // Kimi Code 与 Kimi 开放平台为独立产品，API Key 独立存储，互不复用
-            PlatformType.VOLCENGINE_ARK -> "volcengine_ark_api_key"
-            PlatformType.KIMI_CODE -> "kimi_code_api_key"
-            PlatformType.MIMO -> "mimo_api_key"
-        }
-    }
+    // 键名格式与旧版逐字节一致（<prefix>_api_key / <prefix>_enabled 等），
+    // 前缀统一取自 PlatformType.keyPrefix，存量数据无缝兼容。
 
-    private fun getEnabledKey(platform: PlatformType): String {
-        return when (platform) {
-            PlatformType.DEEPSEEK -> "deepseek_enabled"
-            PlatformType.KIMI -> "kimi_enabled"
-            PlatformType.GLM -> "glm_enabled"
-            PlatformType.SILICONFLOW -> "siliconflow_enabled"
-            PlatformType.VOLCENGINE_ARK -> "volcengine_ark_enabled"
-            PlatformType.KIMI_CODE -> "kimi_code_enabled"
-            PlatformType.MIMO -> "mimo_enabled"
-        }
-    }
+    private fun getApiKeyKey(platform: PlatformType): String = "${platform.keyPrefix}_api_key"
+
+    private fun getEnabledKey(platform: PlatformType): String = "${platform.keyPrefix}_enabled"
 
     // ===== API Key 加密存储（Android Keystore AES-GCM，实现见 SecureCipher） =====
 
@@ -158,17 +139,7 @@ class SettingsStore(
         }
     }
 
-    private fun getPrefix(platform: PlatformType): String {
-        return when (platform) {
-            PlatformType.DEEPSEEK -> "deepseek"
-            PlatformType.KIMI -> "kimi"
-            PlatformType.GLM -> "glm"
-            PlatformType.SILICONFLOW -> "siliconflow"
-            PlatformType.VOLCENGINE_ARK -> "volcengine_ark"
-            PlatformType.KIMI_CODE -> "kimi_code"
-            PlatformType.MIMO -> "mimo"
-        }
-    }
+    private fun getPrefix(platform: PlatformType): String = platform.keyPrefix
 
     // ===== 控制台余额探测路径缓存（MiMo 等需运行时探测候选路径的平台） =====
 

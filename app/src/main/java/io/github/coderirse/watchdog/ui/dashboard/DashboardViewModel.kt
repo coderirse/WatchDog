@@ -3,6 +3,8 @@ package io.github.coderirse.watchdog.ui.dashboard
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import androidx.lifecycle.viewmodel.initializer
+import androidx.lifecycle.viewmodel.viewModelFactory
 import io.github.coderirse.watchdog.di.AppContainer
 import io.github.coderirse.watchdog.data.local.BalanceAlertManager
 import io.github.coderirse.watchdog.data.local.BalanceHistoryStore
@@ -146,15 +148,14 @@ class DashboardViewModel(
     }
 
     companion object {
-        fun factory(container: AppContainer): ViewModelProvider.Factory = object : ViewModelProvider.Factory {
-            @Suppress("UNCHECKED_CAST")
-            override fun <T : ViewModel> create(modelClass: Class<T>): T {
-                return DashboardViewModel(
+        fun factory(container: AppContainer): ViewModelProvider.Factory = viewModelFactory {
+            initializer {
+                DashboardViewModel(
                     quotaRepository = container.quotaRepository,
                     settingsStore = container.settingsStore,
                     balanceAlertManager = container.balanceAlertManager,
                     balanceHistoryStore = container.balanceHistoryStore
-                ) as T
+                )
             }
         }
     }
