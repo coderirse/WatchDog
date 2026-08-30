@@ -21,15 +21,15 @@ val hasReleaseKeystore = keystorePropertiesFile.exists() &&
     !keystoreProperties.getProperty("keyPassword").isNullOrBlank()
 
 android {
-    namespace = "com.example.watchdog"
+    namespace = "io.github.coderirse.watchdog"
     compileSdk = 37
 
     defaultConfig {
-        applicationId = "com.example.watchdog"
+        applicationId = "io.github.coderirse.watchdog"
         minSdk = 24
         targetSdk = 37
-        versionCode = 16
-        versionName = "1.7.0"
+        versionCode = 17
+        versionName = "1.8.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -91,6 +91,7 @@ dependencies {
     // Retrofit + OkHttp
     implementation(libs.retrofit)
     implementation(libs.retrofit.converter.gson)
+    implementation(libs.gson)
     implementation(libs.okhttp.logging)
 
     // Navigation
@@ -101,6 +102,8 @@ dependencies {
 
     // Testing
     testImplementation(libs.junit)
+    testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(libs.turbine)
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     androidTestImplementation(libs.androidx.espresso.core)

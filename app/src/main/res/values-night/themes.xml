@@ -1,6 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
 
+    <!-- 夜间：窗口底色改深，避免 Compose 首帧前闪白 -->
+    <style name="Theme.WatchDog" parent="android:Theme.Material.NoActionBar" />
+
     <style name="Theme.WatchDog.Splash" parent="Theme.SplashScreen">
         <item name="windowSplashScreenBackground">#0F172A</item>
         <item name="windowSplashScreenAnimatedIcon">@drawable/ic_launcher_foreground</item>

@@ -25,16 +25,20 @@
     <string name="dashboard_empty_title">还没有配置任何平台</string>
     <string name="dashboard_empty_subtitle">添加 API Key 后即可开始监控各平台额度</string>
     <string name="dashboard_empty_action">去配置</string>
-    <string name="fab_settings_content_desc">设置API Key</string>
+    <string name="topbar_settings_content_desc">打开设置</string>
+    <string name="dashboard_error_retry">重试</string>
+    <string name="dashboard_pending_platforms">还有 %1$d 个平台可接入 · 点击去配置</string>
     <string name="hero_total_balance">总余额</string>
     <string name="hero_subscription_excluded">订阅配额平台不计入金额汇总</string>
-    <string name="hero_platform_stats">%1$d 个平台 · %2$d 正常 %3$d 异常</string>
+    <string name="hero_platform_stats">已接入 %1$d/%2$d 个平台 · %3$s</string>
+    <string name="hero_status_all_normal">全部正常</string>
+    <string name="hero_status_abnormal">%1$d 异常</string>
     <string name="hero_last_refresh">上次刷新 %1$s</string>
 
     <!-- Token 用量统计 -->
     <string name="daily_usage_title">Token 用量统计</string>
     <string name="daily_usage_empty">暂无 Token 用量数据（配置 DeepSeek 网页会话后可查看）</string>
-    <string name="daily_usage_latest">最近消耗</string>
+    <string name="daily_usage_latest">最近一日消耗</string>
     <string name="daily_usage_requests">请求数</string>
     <string name="daily_usage_cost">成本</string>
     <string name="daily_usage_all">全部</string>
@@ -49,6 +53,7 @@
     <string name="daily_usage_model">模型</string>
     <string name="daily_usage_source">来源</string>
     <string name="daily_usage_tap_hint">点击柱子查看当日明细</string>
+    <string name="daily_usage_chart_a11y">柱状图，共 %1$d 天，最近一天 %2$s，峰值 %3$s</string>
     <string name="daily_usage_day_detail">当日明细</string>
 
     <!-- 额度卡片 -->
@@ -59,7 +64,7 @@
     <string name="status_error">异常</string>
     <string name="status_cached">缓存</string>
     <string name="status_estimate">估算</string>
-    <string name="quota_not_configured_hint">请先配置API Key以查看额度信息</string>
+    <string name="quota_not_configured_hint">请先配置 API Key 以查看额度信息</string>
     <string name="quota_query_failed">查询失败: %1$s</string>
     <string name="quota_label_total_balance">总余额</string>
     <string name="quota_label_remaining_token">剩余Token</string>
@@ -104,7 +109,7 @@
     <string name="settings_kimi_code_independent">与 Kimi 开放平台是独立产品，API Key 不通用</string>
     <string name="settings_console_session_title">网页登录会话</string>
     <string name="settings_console_session_edit">配置</string>
-    <string name="settings_console_session_configured">已配置 · 过期后重新打开登录页即可，登录态保留时免输账号</string>
+    <string name="settings_console_session_configured">已配置</string>
     <string name="settings_console_session_empty">未配置</string>
     <string name="settings_mimo_session_desc">MiMo 无官方余额/用量 API，必须配置网页登录会话。推荐在弹窗中打开登录页，用密码或短信验证码登录后自动抓取凭证</string>
     <string name="settings_deepseek_session_desc">可选配置。未配置时余额走官方 API + 本地估算；配置后可读取网页控制台的真实用量明细（按模型/日期）。推荐在弹窗中打开登录页自动抓取凭证</string>
@@ -167,6 +172,8 @@
     <string name="weblogin_no_session_toast_host">尚未检测到登录凭证（当前页面：%1$s），请完成登录并回到平台页面</string>
     <string name="weblogin_invalid_toast">登录凭证已失效，请在页面中重新登录后再读取</string>
     <string name="weblogin_diag_keys">诊断 · 页面 %1$s\nlocal: %2$s\nsession: %3$s\ncookie: %4$s</string>
+    <string name="weblogin_status_save_failed">凭证保存失败，请重试</string>
+    <string name="weblogin_save_failed_toast">会话保存失败，请重试或手动粘贴凭证</string>
     <string name="quota_relogin_button">打开网页登录，获取最新数据</string>
 
     <!-- 初始余额弹窗 -->

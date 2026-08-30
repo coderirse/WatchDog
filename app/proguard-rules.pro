@@ -30,8 +30,8 @@
 -keep class java.lang.reflect.Type { *; }
 
 # === All API model classes — must NOT be obfuscated ===
--keep class com.example.watchdog.data.api.** { *; }
--keep class com.example.watchdog.data.model.** { *; }
+-keep class io.github.coderirse.watchdog.data.api.** { *; }
+-keep class io.github.coderirse.watchdog.data.model.** { *; }
 
 # === Retrofit ===
 -keepattributes RuntimeVisibleAnnotations, RuntimeVisibleParameterAnnotations
@@ -41,8 +41,8 @@
     @retrofit2.http.* <methods>;
 }
 # 保留 Retrofit Service 接口及其方法签名
--keep interface com.example.watchdog.data.api.*Api { *; }
--keep class * implements com.example.watchdog.data.api.*Api { *; }
+-keep interface io.github.coderirse.watchdog.data.api.*Api { *; }
+-keep class * implements io.github.coderirse.watchdog.data.api.*Api { *; }
 
 # === OkHttp ===
 -dontwarn okhttp3.**
