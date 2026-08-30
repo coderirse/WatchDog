@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.SharedPreferences
 import androidx.core.content.edit
 import io.github.coderirse.watchdog.data.model.PlatformType
+import io.github.coderirse.watchdog.data.repository.WebSessionAccess
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -22,7 +23,7 @@ import org.json.JSONObject
  * 失效后由界面提示重新进入登录页；登录页 WebView 的会话是持久化的，
  * 若仍有效则重新抓取凭证无需用户再次输入账号。
  */
-class WebSessionStore(context: Context) {
+class WebSessionStore(context: Context) : WebSessionAccess {
 
     private val prefs: SharedPreferences = context.applicationContext.getSharedPreferences(
         "watchdog_web_sessions",
@@ -73,7 +74,7 @@ class WebSessionStore(context: Context) {
     }
 
     /** 是否配置了网页会话令牌（用于设置页展示状态）。 */
-    suspend fun hasWebSession(platform: PlatformType): Boolean {
+    override suspend fun hasWebSession(platform: PlatformType): Boolean {
         return getWebSession(platform) != null
     }
 

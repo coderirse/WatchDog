@@ -106,9 +106,9 @@ class AppContainer(context: Context) {
 
     // Repository：编排层 + 各平台 Provider（新增平台 = 新增一个 Provider 并在此注册）
     val quotaRepository: QuotaRepository = QuotaRepository(
-        settingsStore = settingsStore,
-        cacheStore = quotaCacheStore,
-        webSessionStore = webSessionStore,
+        configSource = settingsStore,
+        cache = quotaCacheStore,
+        sessionAccess = webSessionStore,
         providers = listOf(
             DeepSeekProvider(deepSeekApi, deepSeekConsoleApi, webSessionStore, settingsStore),
             KimiProvider(kimiApi, kimiConsoleApi, webSessionStore, settingsStore),

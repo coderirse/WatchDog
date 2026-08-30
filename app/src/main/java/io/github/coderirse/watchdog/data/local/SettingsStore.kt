@@ -5,12 +5,13 @@ import android.content.SharedPreferences
 import android.util.Log
 import androidx.core.content.edit
 import io.github.coderirse.watchdog.data.model.PlatformType
+import io.github.coderirse.watchdog.data.repository.PlatformConfigSource
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 class SettingsStore(
     context: Context
-) {
+) : PlatformConfigSource {
     private val prefs: SharedPreferences = context.applicationContext.getSharedPreferences(
         "watchdog_settings",
         Context.MODE_PRIVATE
@@ -34,7 +35,7 @@ class SettingsStore(
         }
     }
 
-    suspend fun getConfiguredPlatforms(): List<PlatformType> {
+    override suspend fun getConfiguredPlatforms(): List<PlatformType> {
         return withContext(Dispatchers.IO) {
             PlatformType.entries.filter { platform ->
                 val apiKey = prefs.getString(getApiKeyKey(platform), "") ?: ""
@@ -116,28 +117,21 @@ class SettingsStore(
             val lastKey = "${prefix}_last_balance"
 
             val storedMonth = prefs.getInt(monthKey, -1)
-            val accum: Double
-            if (storedMonth != currentMonth) {
-                // 新月：从零开始累计，基准余额取当前值
-                accum = 0.0
-                prefs.edit {
-                    putInt(monthKey, currentMonth)
-                    putString(accumKey, "0.0")
-                    putString(lastKey, currentBalance.toString())
-                }
-            } else {
-                val prevAccum = prefs.getString(accumKey, null)?.toDoubleOrNull() ?: 0.0
-                val lastBalance = prefs.getString(lastKey, null)?.toDoubleOrNull() ?: currentBalance
-                val delta = lastBalance - currentBalance
-                accum = if (delta > 0) prevAccum + delta else prevAccum
-                prefs.edit {
-                    putString(accumKey, accum.toString())
-                    putString(lastKey, currentBalance.toString())
-                }
+            val prevAccum = prefs.getString(accumKey, null)?.toDoubleOrNull() ?: 0.0
+            val lastBalance = prefs.getString(lastKey, null)?.toDoubleOrNull()
+
+            val next = computeMonthlyUsage(storedMonth, currentMonth, prevAccum, lastBalance, currentBalance)
+            prefs.edit {
+                putInt(monthKey, currentMonth)
+                putString(accumKey, next.accumulatedUsage.toString())
+                putString(lastKey, currentBalance.toString())
             }
-            accum.coerceAtLeast(0.0)
+            next.accumulatedUsage
         }
     }
+
+    /** 月度用量计算结果（纯函数输出）。 */
+    data class MonthlyUsageResult(val accumulatedUsage: Double)
 
     private fun getPrefix(platform: PlatformType): String = platform.keyPrefix
 
@@ -270,7 +264,27 @@ class SettingsStore(
         }
     }
 
-    private companion object {
+    companion object {
+        /**
+         * 纯函数：根据上月累计、上次余额与当前余额计算新的本月累计用量。
+         * 跨月（storedMonth != currentMonth）从零重新累计；同月仅累计余额下降量，
+         * 上升（充值/赠送）忽略。lastBalance 缺失（首次记录）时增量为 0。
+         */
+        fun computeMonthlyUsage(
+            storedMonth: Int,
+            currentMonth: Int,
+            prevAccum: Double,
+            lastBalance: Double?,
+            currentBalance: Double
+        ): MonthlyUsageResult {
+            if (storedMonth != currentMonth || lastBalance == null) {
+                return MonthlyUsageResult(0.0)
+            }
+            val delta = lastBalance - currentBalance
+            val accum = if (delta > 0) prevAccum + delta else prevAccum
+            return MonthlyUsageResult(accum.coerceAtLeast(0.0))
+        }
+
         const val KEY_THEME_MODE = "theme_mode"
         const val THEME_MODE_SYSTEM = "system"
         val THEME_MODES = setOf("system", "light", "dark")
