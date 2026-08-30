@@ -115,10 +115,11 @@ class SettingsViewModel(
         }
     }
 
-    /** 保存网页控制台会话令牌（加密存储，界面不回显明文） */
+    /** 保存网页控制台会话令牌（加密存储，界面不回显明文）；会话保存即视为平台启用 */
     fun saveWebSession(platform: PlatformType, token: String) {
         viewModelScope.launch {
             webSessionStore.saveWebSession(platform, token)
+            settingsStore.setEnabled(platform, true)
             loadSettings()
         }
     }

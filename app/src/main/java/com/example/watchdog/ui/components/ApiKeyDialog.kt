@@ -41,12 +41,17 @@ fun ApiKeyDialog(
     var apiKeyInput by remember { mutableStateOf(currentApiKey) }
     var sessionInput by remember { mutableStateOf("") }
 
+    val canSave = apiKeyInput.isNotBlank() ||
+        (platform.supportsConsoleSession && sessionInput.isNotBlank())
+
     fun submit() {
+        if (!canSave) return
         if (apiKeyInput.isNotBlank()) {
             onSave(platform, apiKeyInput.trim())
-            if (platform.supportsConsoleSession && sessionInput.isNotBlank()) {
-                onSaveWebSession(platform, sessionInput.trim())
-            }
+        }
+        // 会话可独立于 API Key 保存（MiMo 等无官方余额 API 的平台仅需会话）
+        if (platform.supportsConsoleSession && sessionInput.isNotBlank()) {
+            onSaveWebSession(platform, sessionInput.trim())
         }
     }
 
@@ -149,7 +154,7 @@ fun ApiKeyDialog(
         confirmButton = {
             TextButton(
                 onClick = { submit() },
-                enabled = apiKeyInput.isNotBlank()
+                enabled = canSave
             ) {
                 Text(stringResource(R.string.action_save))
             }

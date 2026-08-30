@@ -50,7 +50,7 @@ class AppContainer(context: Context) {
     // Retrofit APIs
     val deepSeekApi: DeepSeekApi = createApi("https://api.deepseek.com/")
     val kimiApi: KimiApi = createApi("https://api.moonshot.cn/")
-    val glmApi: GlmApi = createApi("https://bigmodel.cn/")
+    val glmApi: GlmApi = createApi("https://open.bigmodel.cn/")
     // 智谱 Coding Plan 配额接口在 open.bigmodel.cn（与资源包接口不同源）
     val glmCodingPlanApi: GlmCodingPlanApi = createApi("https://open.bigmodel.cn/")
     val siliconFlowApi: SiliconFlowApi = createApi("https://api.siliconflow.cn/")

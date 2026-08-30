@@ -309,7 +309,7 @@ private fun PlatformSettingsCard(
                 Switch(
                     checked = platformState.isEnabled,
                     onCheckedChange = onToggleEnabled,
-                    enabled = hasKey
+                    enabled = hasKey || platformState.webSessionConfigured
                 )
             }
 

@@ -99,6 +99,8 @@ class DashboardViewModel(
                         )
                     else -> QuotaState.Success(quotas)
                 }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e // 协程取消向上传播
             } catch (e: Exception) {
                 _isOffline.value = false
                 _quotaState.value = QuotaState.Error(

@@ -113,8 +113,13 @@ class SettingsStore(
     // ===== 本月用量追踪 =====
 
     /**
-     * 保存月初余额和月份标记
-     * 如果月份变了，月初余额会重置
+     * 记录最新余额并返回本月估算用量（增量累计方案）。
+     *
+     * 每次刷新把"较上次余额的下降量"（真实消耗）累加进本月用量；余额上升
+     * （充值/赠送）不计用量、也不重置累计——修复旧"月初余额-当前余额"方案
+     * 月中充值后整个剩余月份用量恒为 0 的失真问题。跨月自动清零重新累计。
+     *
+     * 已知局限：两次刷新之间"先消耗后充值"的净变化为升时，该区间的消耗会丢失。
      */
     suspend fun recordBalanceAndGetMonthlyUsage(
         platform: PlatformType,
@@ -124,31 +129,32 @@ class SettingsStore(
             val now = java.util.Calendar.getInstance()
             // 用 年*12+月 作为月份标识，避免跨年时误判为同一月份
             val currentMonth = now.get(java.util.Calendar.YEAR) * 12 + now.get(java.util.Calendar.MONTH)
-            val storedMonth = prefs.getInt("${getPrefix(platform)}_month_start_month", -1)
-            val startBalanceKey = "${getPrefix(platform)}_month_start_balance"
+            val prefix = getPrefix(platform)
+            val monthKey = "${prefix}_usage_month"
+            val accumKey = "${prefix}_usage_accum"
+            val lastKey = "${prefix}_last_balance"
 
-            val startBalance: Double
+            val storedMonth = prefs.getInt(monthKey, -1)
+            val accum: Double
             if (storedMonth != currentMonth) {
-                // 新月：重置起始余额为当前余额（以字符串存储，避免 Float 精度损失）
-                startBalance = currentBalance
+                // 新月：从零开始累计，基准余额取当前值
+                accum = 0.0
                 prefs.edit {
-                    putString(startBalanceKey, currentBalance.toString())
-                    putInt("${getPrefix(platform)}_month_start_month", currentMonth)
+                    putInt(monthKey, currentMonth)
+                    putString(accumKey, "0.0")
+                    putString(lastKey, currentBalance.toString())
                 }
             } else {
-                // 同月：优先读新版字符串；旧版 Float 数据兜底迁移
-                val storedString = prefs.getString(startBalanceKey, null)
-                startBalance = if (storedString != null) {
-                    storedString.toDoubleOrNull() ?: currentBalance
-                } else {
-                    val legacy = prefs.getFloat(startBalanceKey, Float.NaN)
-                    if (legacy.isNaN()) currentBalance else legacy.toDouble()
+                val prevAccum = prefs.getString(accumKey, null)?.toDoubleOrNull() ?: 0.0
+                val lastBalance = prefs.getString(lastKey, null)?.toDoubleOrNull() ?: currentBalance
+                val delta = lastBalance - currentBalance
+                accum = if (delta > 0) prevAccum + delta else prevAccum
+                prefs.edit {
+                    putString(accumKey, accum.toString())
+                    putString(lastKey, currentBalance.toString())
                 }
             }
-
-            // 本月用量 = 月初余额 - 当前余额
-            val usage = startBalance - currentBalance
-            if (usage < 0) 0.0 else usage
+            accum.coerceAtLeast(0.0)
         }
     }
 
@@ -161,6 +167,22 @@ class SettingsStore(
             PlatformType.VOLCENGINE_ARK -> "volcengine_ark"
             PlatformType.KIMI_CODE -> "kimi_code"
             PlatformType.MIMO -> "mimo"
+        }
+    }
+
+    // ===== 控制台余额探测路径缓存（MiMo 等需运行时探测候选路径的平台） =====
+
+    /** 保存某平台最近一次探测命中的余额路径，下次刷新优先直用。 */
+    suspend fun saveProbePath(platform: PlatformType, path: String) {
+        withContext(Dispatchers.IO) {
+            prefs.edit { putString("${getPrefix(platform)}_probe_path", path) }
+        }
+    }
+
+    /** 读取某平台缓存的探测命中路径；无则 null。 */
+    suspend fun getProbePath(platform: PlatformType): String? {
+        return withContext(Dispatchers.IO) {
+            prefs.getString("${getPrefix(platform)}_probe_path", null)?.takeIf { it.isNotBlank() }
         }
     }
 

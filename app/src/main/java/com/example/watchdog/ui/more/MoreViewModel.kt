@@ -51,6 +51,8 @@ class MoreViewModel(application: Application) : AndroidViewModel(application) {
                     checkResult = if (hasUpdate) "发现新版本 v$latest，请前往 GitHub 下载"
                     else "已是最新版本 v$current"
                 )
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
                 _uiState.value = _uiState.value.copy(
                     isChecking = false,

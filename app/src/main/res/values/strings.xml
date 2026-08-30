@@ -167,6 +167,8 @@
     <string name="weblogin_no_session_toast_host">尚未检测到登录凭证（当前页面：%1$s），请完成登录并回到平台页面</string>
     <string name="weblogin_invalid_toast">登录凭证已失效，请在页面中重新登录后再读取</string>
     <string name="weblogin_diag_keys">诊断 · 页面 %1$s\nlocal: %2$s\nsession: %3$s\ncookie: %4$s</string>
+    <string name="weblogin_status_save_failed">凭证保存失败，请重试</string>
+    <string name="weblogin_save_failed_toast">会话保存失败，请重试或手动粘贴凭证</string>
     <string name="quota_relogin_button">打开网页登录，获取最新数据</string>
 
     <!-- 初始余额弹窗 -->

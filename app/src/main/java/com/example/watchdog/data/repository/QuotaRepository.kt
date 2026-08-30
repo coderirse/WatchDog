@@ -115,6 +115,8 @@ class QuotaRepository(
                 runCatching { cacheStore.put(platform, result) }
             }
             result
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e // 协程取消必须向上传播，不能当作错误吞掉
         } catch (e: Exception) {
             // 网络/解析异常时优先展示上次缓存的数据，并标记为缓存数据
             val cached = runCatching { cacheStore.get(platform) }.getOrNull()
@@ -718,17 +720,34 @@ class QuotaRepository(
         return result
     }
 
-    /** 带会话探测余额类候选路径；首个命中即返回。 */
+    /**
+     * 带会话探测余额类候选路径；首个命中即返回并持久化该路径，
+     * 下次刷新优先直用（避免每轮全量探测 8 个候选路径触发网关风控）。
+     */
     private suspend fun probeMimoBalance(session: String): MiMoConsoleParser.BalanceInfo? {
+        // 1) 上次命中的路径优先
+        val saved = runCatching { settingsStore.getProbePath(PlatformType.MIMO) }.getOrNull()
+        if (saved != null) {
+            val hit = probeMimoPath(session, saved)
+            if (hit != null) return hit
+            // 缓存路径失效（接口变更）→ 回退全量探测，探测成功后覆盖
+        }
+        // 2) 全量候选探测
         for (path in MiMoConsoleParser.BALANCE_CANDIDATES) {
-            val body = runCatching {
-                val resp = mimoConsoleApi.getRaw(session, path)
-                if (resp.isSuccessful) resp.body()?.string() else null
-            }.getOrNull() ?: continue
-            val info = MiMoConsoleParser.parseBalanceInfo(body)
-            if (info != null) return info
+            if (path == saved) continue
+            val info = probeMimoPath(session, path) ?: continue
+            runCatching { settingsStore.saveProbePath(PlatformType.MIMO, path) }
+            return info
         }
         return null
+    }
+
+    private suspend fun probeMimoPath(session: String, path: String): MiMoConsoleParser.BalanceInfo? {
+        val body = runCatching {
+            val resp = mimoConsoleApi.getRaw(session, path)
+            if (resp.isSuccessful) resp.body()?.string() else null
+        }.getOrNull() ?: return null
+        return MiMoConsoleParser.parseBalanceInfo(body)
     }
 
     /** 订阅详情 → booster 描述文案（纯字符串，展示在卡片底部）。 */

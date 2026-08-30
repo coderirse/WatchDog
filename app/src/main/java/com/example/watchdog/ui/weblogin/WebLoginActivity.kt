@@ -635,8 +635,21 @@ class WebLoginActivity : ComponentActivity() {
         setStatus(getString(R.string.weblogin_status_captured))
         val app = application as WatchDogApplication
         lifecycleScope.launch(Dispatchers.IO) {
-            runCatching { app.appContainer.webSessionStore.saveWebSession(loginPlatform, token, cookie) }
+            val saved = runCatching {
+                app.appContainer.webSessionStore.saveWebSession(loginPlatform, token, cookie)
+            }.isSuccess
             withContext(Dispatchers.Main) {
+                if (!saved) {
+                    // 存储失败（加密/磁盘异常）：如实提示，不跳转，允许用户重试
+                    finished = false
+                    setStatus(getString(R.string.weblogin_status_save_failed))
+                    Toast.makeText(
+                        this@WebLoginActivity,
+                        getString(R.string.weblogin_save_failed_toast),
+                        Toast.LENGTH_LONG
+                    ).show()
+                    return@withContext
+                }
                 Toast.makeText(
                     this@WebLoginActivity,
                     getString(R.string.weblogin_success_toast, loginPlatform.displayName),
