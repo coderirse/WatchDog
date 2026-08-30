@@ -3,6 +3,11 @@ package io.github.coderirse.watchdog.ui.dashboard
 import android.content.res.Configuration
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -28,7 +33,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -152,6 +156,12 @@ fun DashboardContent(
                     )
                 },
                 actions = {
+                    IconButton(onClick = onNavigateToSettings) {
+                        Icon(
+                            imageVector = Icons.Filled.Settings,
+                            contentDescription = stringResource(R.string.topbar_settings_content_desc)
+                        )
+                    }
                     IconButton(onClick = onRefresh) {
                         Icon(
                             imageVector = Icons.Filled.Refresh,
@@ -164,14 +174,6 @@ fun DashboardContent(
                     titleContentColor = MaterialTheme.colorScheme.onBackground
                 )
             )
-        },
-        floatingActionButton = {
-            FloatingActionButton(onClick = onNavigateToSettings) {
-                Icon(
-                    imageVector = Icons.Filled.Settings,
-                    contentDescription = stringResource(R.string.fab_settings_content_desc)
-                )
-            }
         }
     ) { innerPadding ->
         PullToRefreshBox(
@@ -199,7 +201,7 @@ fun DashboardContent(
                     onNavigateToSettings = onNavigateToSettings,
                     onRelogin = onRelogin
                 )
-                is QuotaState.Error -> ErrorContent(state.message)
+                is QuotaState.Error -> ErrorContent(state.message, onRetry = onRefresh)
             }
         }
     }
@@ -212,13 +214,12 @@ private val heroBrush: Brush = Brush.linearGradient(
 )
 
 private fun formatClockTime(t: Long): String =
-    SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(t))
+    SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(t))
 
 @Composable
 fun HeroOverviewCard(quotas: List<QuotaInfo>, modifier: Modifier = Modifier) {
     val configured = quotas.filter { it.isConfigured }
-    val normalCount = configured.count { it.errorMessage == null }
-    val abnormalCount = configured.size - normalCount
+    val abnormalCount = configured.count { it.errorMessage != null }
     // 金额汇总：仅计按量付费且以 CNY 计价的平台；
     // 订阅配额平台无余额概念，GLM 等以 Token 计价的平台不能混入金额求和
     val totalBalance = quotas.sumCnyBalance()
@@ -239,7 +240,7 @@ fun HeroOverviewCard(quotas: List<QuotaInfo>, modifier: Modifier = Modifier) {
                 Spacer(modifier = Modifier.height(2.dp))
                 Row(verticalAlignment = Alignment.Bottom) {
                     Text(
-                        text = String.format("%.2f", totalBalance),
+                        text = String.format(Locale.US, "%.2f", totalBalance),
                         style = balanceNumeral,
                         color = onBrand
                     )
@@ -268,7 +269,9 @@ fun HeroOverviewCard(quotas: List<QuotaInfo>, modifier: Modifier = Modifier) {
                     Text(
                         stringResource(
                             R.string.hero_platform_stats,
-                            quotas.size, normalCount, abnormalCount
+                            configured.size, quotas.size,
+                            if (abnormalCount == 0) stringResource(R.string.hero_status_all_normal)
+                            else stringResource(R.string.hero_status_abnormal, abnormalCount)
                         ),
                         style = MaterialTheme.typography.bodySmall,
                         color = onBrandSecondary
@@ -304,6 +307,9 @@ private fun QuotaListOrEmpty(
         EmptyContent(onNavigateToSettings)
         return
     }
+    val configuredQuotas = quotas.filter { it.isConfigured }
+    val pendingCount = quotas.size - configuredQuotas.size
+
     LazyColumn(
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -322,8 +328,15 @@ private fun QuotaListOrEmpty(
             DailyUsageCard(usages = dailyModelUsage)
         }
 
-        items(quotas, key = { it.platform.name }) { quota ->
+        items(configuredQuotas, key = { it.platform.name }) { quota ->
             PlatformQuotaCard(quotaInfo = quota, onRelogin = onRelogin)
+        }
+
+        // 未配置平台折叠为单个入口卡（内容完全相同的占位卡不再逐张占据首屏）
+        if (pendingCount > 0) {
+            item(key = "pending_platforms") {
+                PendingPlatformsCard(count = pendingCount, onClick = onNavigateToSettings)
+            }
         }
 
         item {
@@ -335,7 +348,39 @@ private fun QuotaListOrEmpty(
                 textAlign = TextAlign.Center,
                 modifier = Modifier.fillMaxWidth()
             )
-            Spacer(modifier = Modifier.height(72.dp))
+            Spacer(modifier = Modifier.height(16.dp))
+        }
+    }
+}
+
+/** 未配置平台折叠入口卡：点击跳转设置页。 */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun PendingPlatformsCard(count: Int, onClick: () -> Unit) {
+    Card(
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant
+        )
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = Icons.Filled.Add,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(20.dp)
+            )
+            Spacer(modifier = Modifier.width(12.dp))
+            Text(
+                text = stringResource(R.string.dashboard_pending_platforms, count),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.weight(1f)
+            )
         }
     }
 }
@@ -383,7 +428,7 @@ private fun EmptyContent(onNavigateToSettings: () -> Unit) {
 }
 
 @Composable
-private fun ErrorContent(message: String) {
+private fun ErrorContent(message: String, onRetry: () -> Unit) {
     Box(
         modifier = Modifier.fillMaxSize().padding(32.dp),
         contentAlignment = Alignment.Center
@@ -402,6 +447,10 @@ private fun ErrorContent(message: String) {
                 color = MaterialTheme.colorScheme.error,
                 textAlign = TextAlign.Center
             )
+            Spacer(modifier = Modifier.height(16.dp))
+            Button(onClick = onRetry) {
+                Text(stringResource(R.string.dashboard_error_retry))
+            }
         }
     }
 }
@@ -422,12 +471,23 @@ private fun DashboardSkeleton() {
 
 @Composable
 private fun SkeletonBlock(height: Int) {
+    // 呼吸式 alpha 动画（shimmer），比纯色块更能传达"加载中"状态
+    val transition = rememberInfiniteTransition(label = "skeleton")
+    val alpha by transition.animateFloat(
+        initialValue = 0.4f,
+        targetValue = 0.9f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 800),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "skeleton-alpha"
+    )
     Box(
         modifier = Modifier
             .fillMaxWidth()
             .height(height.dp)
             .clip(RoundedCornerShape(16.dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = alpha))
     )
 }
 

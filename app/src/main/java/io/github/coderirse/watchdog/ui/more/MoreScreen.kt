@@ -131,7 +131,7 @@ fun MoreContent(
                             Text(
                                 text = state.checkResult,
                                 style = MaterialTheme.typography.bodySmall,
-                                color = if (state.hasUpdate) MaterialTheme.colorScheme.error
+                                color = if (state.hasUpdate) MaterialTheme.colorScheme.primary
                                 else MaterialTheme.colorScheme.onSurfaceVariant
                             )
                             if (state.hasUpdate && state.latestVersion != null) {

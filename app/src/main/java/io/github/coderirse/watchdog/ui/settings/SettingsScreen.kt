@@ -6,6 +6,7 @@ import android.content.res.Configuration
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -314,10 +315,22 @@ private fun PlatformSettingsCard(
             }
 
             Spacer(modifier = Modifier.height(8.dp))
+            val host = consoleHost(platform)
+            val ctx = LocalContext.current
             Text(
-                text = stringResource(R.string.settings_create_key_hint, consoleHost(platform)),
+                text = stringResource(R.string.settings_create_key_hint, host),
                 style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.outline
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.clickable {
+                    runCatching {
+                        ctx.startActivity(
+                            android.content.Intent(
+                                android.content.Intent.ACTION_VIEW,
+                                android.net.Uri.parse("https://$host")
+                            )
+                        )
+                    }
+                }
             )
 
             if (platform == PlatformType.KIMI_CODE) {

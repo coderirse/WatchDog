@@ -140,32 +140,42 @@ class WebLoginActivity : ComponentActivity() {
      */
     private fun buildLayout(): LinearLayout {
         val dp = resources.displayMetrics.density
+        // 深色模式适配：标题区/按钮行随系统主题，WebView 内容仍走白底（平台登录页为浅色）
+        val night = resources.configuration.uiMode and
+            android.content.res.Configuration.UI_MODE_NIGHT_MASK ==
+            android.content.res.Configuration.UI_MODE_NIGHT_YES
+        val chromeBg = if (night) Color.rgb(0x0F, 0x17, 0x2A) else Color.WHITE
+        val titleColor = if (night) Color.rgb(0xF1, 0xF5, 0xF9) else Color.BLACK
+        val subColor = if (night) Color.rgb(0x94, 0xA3, 0xB8) else Color.GRAY
+        val cancelColor = if (night) Color.rgb(0x33, 0x41, 0x55) else Color.rgb(0xEE, 0xEE, 0xF2)
+        val cancelTextColor = if (night) Color.rgb(0xE2, 0xE8, 0xF0) else Color.BLACK
+
         // 全屏适配：根布局不设左右 padding，WebView 铺满（修复"白边不适配"）
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.WHITE)
+            setBackgroundColor(chromeBg)
         }
 
         // 标题区左右留边距（仅文字区，不作用于 WebView）
         val info = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding((16 * dp).toInt(), (12 * dp).toInt(), (16 * dp).toInt(), (6 * dp).toInt())
-            setBackgroundColor(Color.WHITE)
+            setBackgroundColor(chromeBg)
         }
         val title = TextView(this).apply {
             text = getString(R.string.weblogin_title, loginPlatform.displayName)
             textSize = 18f
-            setTextColor(Color.BLACK)
+            setTextColor(titleColor)
         }
         val hint = TextView(this).apply {
             text = getString(R.string.weblogin_hint)
             textSize = 12f
-            setTextColor(Color.GRAY)
+            setTextColor(subColor)
         }
         val status = TextView(this).apply {
             text = statusText
             textSize = 11f
-            setTextColor(Color.GRAY)
+            setTextColor(subColor)
             maxLines = 4
         }
         statusView = status
@@ -186,7 +196,7 @@ class WebLoginActivity : ComponentActivity() {
         // 底部按钮：Material 观感（圆角 + 主色填充 / 次要色描边），非复古系统按钮
         val cancelBg = android.graphics.drawable.GradientDrawable().apply {
             cornerRadius = (24 * dp).toInt().toFloat()
-            setColor(Color.rgb(0xEE, 0xEE, 0xF2))
+            setColor(cancelColor)
         }
         val captureBg = android.graphics.drawable.GradientDrawable().apply {
             cornerRadius = (24 * dp).toInt().toFloat()
@@ -195,12 +205,13 @@ class WebLoginActivity : ComponentActivity() {
         val buttons = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             setPadding((16 * dp).toInt(), (8 * dp).toInt(), (16 * dp).toInt(), (12 * dp).toInt())
-            setBackgroundColor(Color.WHITE)
+            setBackgroundColor(chromeBg)
         }
         val gap = (8 * dp).toInt()
         val cancel = Button(this).apply {
             text = getString(R.string.action_cancel)
             background = cancelBg
+            setTextColor(cancelTextColor)
             textSize = 15f
             layoutParams = LinearLayout.LayoutParams(0, (48 * dp).toInt(), 1f)
             setOnClickListener { finish() }

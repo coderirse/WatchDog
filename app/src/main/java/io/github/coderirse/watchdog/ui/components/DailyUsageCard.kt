@@ -38,10 +38,13 @@ import androidx.compose.ui.graphics.drawscope.Fill
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.annotation.StringRes
 import io.github.coderirse.watchdog.R
 import io.github.coderirse.watchdog.data.model.DailyModelUsage
 import io.github.coderirse.watchdog.data.model.PlatformType
@@ -90,9 +93,9 @@ fun DailyUsageCard(usages: List<DailyModelUsage>, modifier: Modifier = Modifier)
                 modifier = Modifier.horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                PlatformChip(null, platforms, selectedPlatform) { selectedPlatform = it; selectedModel = null }
+                PlatformChip(null, selectedPlatform) { selectedPlatform = it; selectedModel = null }
                 platforms.forEach { p ->
-                    PlatformChip(p, platforms, selectedPlatform) { selectedPlatform = it; selectedModel = null }
+                    PlatformChip(p, selectedPlatform) { selectedPlatform = it; selectedModel = null }
                 }
             }
 
@@ -103,9 +106,9 @@ fun DailyUsageCard(usages: List<DailyModelUsage>, modifier: Modifier = Modifier)
                 modifier = Modifier.horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                ModelChip(null, models, selectedModel) { selectedModel = it }
+                ModelChip(null, selectedModel) { selectedModel = it }
                 models.forEach { m ->
-                    ModelChip(m, models, selectedModel) { selectedModel = it }
+                    ModelChip(m, selectedModel) { selectedModel = it }
                 }
             }
 
@@ -166,10 +169,26 @@ fun DailyUsageCard(usages: List<DailyModelUsage>, modifier: Modifier = Modifier)
     }
 }
 
-private enum class Range(val label: String, val days: Int?) {
-    WEEK("近7天", 7),
-    MONTH("近30天", 30),
-    ALL("全部", null);
+@StringRes
+private fun rangeLabel(range: Range): Int = when (range) {
+    Range.WEEK -> R.string.daily_usage_range_7d
+    Range.MONTH -> R.string.daily_usage_range_30d
+    Range.ALL -> R.string.daily_usage_range_all
+}
+
+@StringRes
+private fun metricLabel(metric: Metric): Int = when (metric) {
+    Metric.TOTAL_TOKENS -> R.string.daily_usage_metric_total
+    Metric.INPUT -> R.string.daily_usage_metric_input
+    Metric.OUTPUT -> R.string.daily_usage_metric_output
+    Metric.REQUESTS -> R.string.daily_usage_metric_requests
+    Metric.COST -> R.string.daily_usage_metric_cost
+}
+
+private enum class Range(val days: Int?) {
+    WEEK(7),
+    MONTH(30),
+    ALL(null);
 
     /** 返回本范围的最早允许日期（ISO yyyy-MM-dd）；全部为 null，不参与过滤。 */
     fun startCutoff(): String? {
@@ -183,18 +202,17 @@ private enum class Range(val label: String, val days: Int?) {
     }
 }
 
-private enum class Metric(val label: String, val totalOf: (DailyModelUsage) -> Double) {
-    TOTAL_TOKENS("总Tokens", { it.totalTokens.toDouble() }),
-    INPUT("输入", { it.inputTokens.toDouble() }),
-    OUTPUT("输出", { it.outputTokens.toDouble() }),
-    REQUESTS("请求数", { it.requests.toDouble() }),
-    COST("成本", { it.cost })
+private enum class Metric(val totalOf: (DailyModelUsage) -> Double) {
+    TOTAL_TOKENS({ it.totalTokens.toDouble() }),
+    INPUT({ it.inputTokens.toDouble() }),
+    OUTPUT({ it.outputTokens.toDouble() }),
+    REQUESTS({ it.requests.toDouble() }),
+    COST({ it.cost })
 }
 
 @Composable
 private fun PlatformChip(
     platform: PlatformType?,
-    all: List<PlatformType>,
     current: PlatformType?,
     onClick: (PlatformType?) -> Unit
 ) {
@@ -221,7 +239,6 @@ private fun PlatformChip(
 @Composable
 private fun ModelChip(
     model: String?,
-    all: List<String>,
     current: String?,
     onClick: (String?) -> Unit
 ) {
@@ -256,7 +273,7 @@ private fun MetricChip(m: Metric, selected: Boolean, onClick: () -> Unit) {
             .padding(horizontal = 10.dp, vertical = 5.dp)
     ) {
         Text(
-            text = m.label,
+            text = stringResource(metricLabel(m)),
             style = MaterialTheme.typography.labelSmall,
             color = if (selected) color else MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -274,7 +291,7 @@ private fun RangeChip(r: Range, selected: Boolean, onClick: () -> Unit) {
             .padding(horizontal = 10.dp, vertical = 5.dp)
     ) {
         Text(
-            text = r.label,
+            text = stringResource(rangeLabel(r)),
             style = MaterialTheme.typography.labelSmall,
             color = if (selected) color else MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -296,7 +313,11 @@ private fun DailySummaryRow(byDate: Map<String, List<DailyModelUsage>>, metric: 
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
-        SummaryItem(stringResource(R.string.daily_usage_latest), fmtValue(value, metric))
+        SummaryItem(
+            stringResource(R.string.daily_usage_latest) +
+                (lastDate?.let { " · ${it.takeLast(5)}" } ?: ""),
+            fmtValue(value, metric)
+        )
         SummaryItem(stringResource(R.string.daily_usage_requests), formatCompact(requests.toLong()))
         SummaryItem(stringResource(R.string.daily_usage_cost), String.format(Locale.US, "¥%.2f", cost))
     }
@@ -329,17 +350,26 @@ private fun DailyBarChart(
 ) {
     val barColor = MaterialTheme.colorScheme.primary
     val selectedColor = MaterialTheme.colorScheme.tertiary
+    val axisColor = MaterialTheme.colorScheme.onSurfaceVariant
     val dates = byDate.keys.toList()
     val values = dates.map { d -> byDate[d].orEmpty().sumOf { metric.totalOf(it) } }
     val maxV = values.maxOrNull()?.coerceAtLeast(1.0) ?: 1.0
 
+    // 读屏无障碍：Canvas 对 TalkBack 是黑盒，用一段汇总文本替代
+    val summary = stringResource(
+        R.string.daily_usage_chart_a11y,
+        dates.size,
+        fmtValue(values.lastOrNull() ?: 0.0, metric),
+        fmtValue(maxV, metric)
+    )
+
     Box(
-        modifier = modifier.pointerInput(dates, values, metric, selectedDate) {
+        modifier = modifier.semantics { contentDescription = summary }.pointerInput(dates, selectedDate) {
             detectTapGestures { offset ->
                 val left = 6.dp.toPx()
-                val right = 6.dp.toPx()
-                val chartW = size.width - left - right
+                val chartW = size.width - left - 6.dp.toPx()
                 val slot = if (dates.isEmpty()) 0f else chartW / dates.size
+                if (slot <= 0f) return@detectTapGestures
                 val idx = ((offset.x - left) / slot).toInt()
                 if (idx in dates.indices) {
                     onSelectDate(if (dates[idx] == selectedDate) null else dates[idx])
@@ -350,26 +380,31 @@ private fun DailyBarChart(
         Canvas(modifier = Modifier.fillMaxSize()) {
             val left = 6.dp.toPx()
             val right = 6.dp.toPx()
-            val top = 8.dp.toPx()
+            val top = 18.dp.toPx()
             val bottom = 24.dp.toPx()
             val chartW = size.width - left - right
             val chartH = size.height - top - bottom
             val slot = if (dates.isEmpty()) 0f else chartW / dates.size
+            val corner = 3.dp.toPx()
 
-            // 柱
+            // 柱（圆角顶）
             values.forEachIndexed { i, v ->
                 val h = (chartH * (v / maxV)).toFloat()
                 val xLeft = left + slot * i + slot * 0.2f
                 val barW = slot * 0.6f
                 val yTop = top + (chartH - h)
                 val isSelected = dates[i] == selectedDate
-                drawRect(
+                drawRoundRect(
                     color = (if (isSelected) selectedColor else barColor).copy(alpha = if (v > 0) 0.85f else 0.15f),
                     topLeft = Offset(xLeft, yTop),
                     size = Size(barW, h.coerceAtLeast(1f)),
+                    cornerRadius = androidx.compose.ui.geometry.CornerRadius(corner, corner),
                     style = Fill
                 )
             }
+
+            // Y 轴最大值提示（左上角）
+            axisLabel("▲ " + fmtValue(maxV, metric), left, top - 5.dp.toPx(), axisColor, textSizeSp = 10f)
 
             // 日期轴标签（首/尾 + 每隔几天）
             val labelEvery = (dates.size / 6).coerceAtLeast(1)
@@ -377,25 +412,29 @@ private fun DailyBarChart(
                 if (i % labelEvery == 0 || i == dates.size - 1) {
                     val short = d.takeLast(5)
                     val x = (left + slot * i + slot * 0.3f).coerceIn(left, size.width - 40.dp.toPx())
-                    textLabel(short, x, size.height - 2.dp.toPx())
+                    axisLabel(short, x, size.height - 2.dp.toPx(), axisColor, textSizeSp = 10f)
                 }
             }
         }
     }
 }
 
-private fun DrawScope.textLabel(date: String?, x: Float, y: Float) {
-    if (date == null) return
-    drawContext.canvas.nativeCanvas.drawText(
-        date,
-        x,
-        y,
-        android.graphics.Paint().apply {
-            color = android.graphics.Color.GRAY
-            textSize = 11f
-            isAntiAlias = true
-        }
-    )
+/**
+ * Canvas 文字标签。textSize 按 sp 传入并乘 density 转像素
+ * （原实现裸用 11px，在 3x 屏上仅约 3.7sp，几乎不可读）。
+ */
+private fun DrawScope.axisLabel(text: String, x: Float, y: Float, color: Color, textSizeSp: Float) {
+    val paint = android.graphics.Paint().apply {
+        this.color = android.graphics.Color.argb(
+            (color.alpha * 255).toInt(),
+            (color.red * 255).toInt(),
+            (color.green * 255).toInt(),
+            (color.blue * 255).toInt()
+        )
+        textSize = textSizeSp * density
+        isAntiAlias = true
+    }
+    drawContext.canvas.nativeCanvas.drawText(text, x, y, paint)
 }
 
 /** 选中某天的明细展示（该天该来源/模型下的各指标）。 */

@@ -2,8 +2,8 @@ package io.github.coderirse.watchdog.ui.navigation
 
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -60,7 +60,7 @@ fun WatchDogNavGraph(
 
     val bottomItems = listOf(
         BottomNavItem(Routes.DASHBOARD, stringResource(R.string.nav_quota), Icons.Filled.Home),
-        BottomNavItem(Routes.MORE, stringResource(R.string.nav_more), Icons.Filled.Menu)
+        BottomNavItem(Routes.MORE, stringResource(R.string.nav_more), Icons.AutoMirrored.Filled.List)
     )
 
     Scaffold(
