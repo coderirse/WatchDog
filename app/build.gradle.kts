@@ -21,11 +21,11 @@ val hasReleaseKeystore = keystorePropertiesFile.exists() &&
     !keystoreProperties.getProperty("keyPassword").isNullOrBlank()
 
 android {
-    namespace = "com.example.watchdog"
+    namespace = "io.github.coderirse.watchdog"
     compileSdk = 37
 
     defaultConfig {
-        applicationId = "com.example.watchdog"
+        applicationId = "io.github.coderirse.watchdog"
         minSdk = 24
         targetSdk = 37
         versionCode = 16
