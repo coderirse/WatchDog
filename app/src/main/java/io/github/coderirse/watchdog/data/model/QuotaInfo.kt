@@ -56,11 +56,30 @@ data class QuotaWindow(
 )
 
 /**
+ * "本月用量"的数据来源，供 UI 决定是否标注"估算"。
+ *
+ * 此前只有火山方舟带 `isEstimate` 标记，DeepSeek/Kimi 走同一套本地增量推算时
+ * 却以精确两位小数展示，用户无法分辨哪个数字是服务端口径、哪个是本地推算。
+ */
+enum class MonthlyUsageSource {
+    /** 平台接口直接返回的真实用量（如 DeepSeek 控制台 monthly_usage、GLM 累计已用）。 */
+    SERVER,
+
+    /** 本地增量累计推算（余额下降量累加），存在"先消耗后充值"丢量的已知局限。 */
+    LOCAL_ESTIMATE
+}
+
+/**
  * 统一的平台额度数据模型。
  * 支持两种模式：
  * 1. 按量付费余额模式（现有 4 平台）：totalBalance / monthlyUsage / monthlyLimit；
  * 2. 订阅配额模式（如 Kimi Code）：planName / quotaWindows / boosterInfo，
  *    该模式下 totalBalance 无意义，保持默认值。
+ *
+ * ⚠️ [isAvailable] 的语义必须严格理解为"**本次拿到了可信的额度数值**"，
+ * 而不是"平台已配置""会话有效""接口返回了 200"。KimiProvider 曾因把
+ * "会话存在但没取到余额"也置为 true，配合 totalBalance="0.00"，
+ * 使假 0 余额穿透总额汇总、趋势记录与卡片状态判断（详见各 Provider 注释）。
  */
 data class QuotaInfo(
     val platform: PlatformType,
@@ -89,7 +108,11 @@ data class QuotaInfo(
     val consoleDiag: String? = null,
     // true 表示网页会话已失效且无法后台自动重登（如 MiMo 需人工过验证码），
     // UI 应显示"点击重新登录"入口拉起 WebView 登录页
-    val needsRelogin: Boolean = false
+    val needsRelogin: Boolean = false,
+    // "本月用量"口径：SERVER 为平台接口真实值，LOCAL_ESTIMATE 为本地推算（UI 标注"估算"）。
+    // 声明为可空是本文件的刻意设计：Gson 反射反序列化会向缺失字段注入 null（绕过 Kotlin 默认值），
+    // 声明成非空会让读取处被编译器插入 null 检查、在旧缓存上直接抛 NPE。
+    val monthlyUsageSource: MonthlyUsageSource? = MonthlyUsageSource.SERVER
 ) {
     val hasModelUsage: Boolean get() = modelUsages.isNotEmpty()
     val totalRequestCount: Long get() = modelUsages.sumOf { it.requestCount }
@@ -97,6 +120,13 @@ data class QuotaInfo(
 
     /** 是否为订阅配额模式（存在套餐名或配额窗口） */
     val isSubscriptionMode: Boolean get() = planName != null || quotaWindows.isNotEmpty()
+
+    /**
+     * "本月用量"是否为本地推算值，UI 据此追加"（估算）"标识。
+     * null（旧缓存反序列化）按"非估算"处理，保证断网回退路径不会崩溃。
+     */
+    val isMonthlyUsageEstimated: Boolean
+        get() = monthlyUsageSource == MonthlyUsageSource.LOCAL_ESTIMATE
 
     /**
      * 订阅配额模式下所有窗口中最小的剩余占比（0.0~1.0），用于低余额/耗尽状态推导；
@@ -145,9 +175,15 @@ sealed class QuotaState {
  * 汇总已配置、无异常、非订阅且以 CNY 计价的平台总余额。
  * [freshOnly] 为 true 时仅统计本次成功获取（非离线缓存 isStale）的数据。
  * Token 计价平台（GLM）与订阅配额平台（Kimi Code）不参与金额汇总。
+ *
+ * 余额字符串不可解析（null/空/脏数据）时**跳过该平台**而非按 0 计入：
+ * 按 0 计入会让总额静默偏低，且无法与"真的没钱了"区分。
  */
 fun List<QuotaInfo>.sumCnyBalance(freshOnly: Boolean = false): Double =
-    filter {
-        it.isConfigured && it.errorMessage == null && !it.isSubscriptionMode &&
-            it.currency == "CNY" && (!freshOnly || !it.isStale)
-    }.sumOf { it.totalBalance.toDoubleOrNull() ?: 0.0 }
+    mapNotNull { q ->
+        if (q.isConfigured && q.errorMessage == null && !q.isSubscriptionMode &&
+            q.currency == "CNY" && (!freshOnly || !q.isStale)
+        ) {
+            q.totalBalance.toDoubleOrNull()
+        } else null
+    }.sum()

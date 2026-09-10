@@ -36,12 +36,28 @@ val Typography = Typography(
 /**
  * 余额大数字强调样式：加粗 + tabular 数字（等宽数字，避免金额刷新时跳动）。
  * 在 Typography 之外独立暴露，用于余额卡片等大数字场景。
+ *
+ * 字号从 32sp 提到 40sp：Hero 与品牌卡上的余额是整屏信息的视觉锚点，
+ * 32sp 在 6.7" 屏幕上偏小、与 titleMedium 拉不开层级。
  */
 val balanceNumeral = TextStyle(
     fontFamily = FontFamily.Default,
     fontWeight = FontWeight.Bold,
-    fontSize = 32.sp,
-    lineHeight = 40.sp,
+    fontSize = 40.sp,
+    lineHeight = 48.sp,
+    letterSpacing = (-0.5).sp,
+    fontFeatureSettings = "tnum"
+)
+
+/**
+ * 次级余额数字（订阅窗口、账户余额行等）：比 [balanceNumeral] 小一号，
+ * 但仍保持 tabular 数字，避免与主数字争夺注意力。
+ */
+val secondaryNumeral = TextStyle(
+    fontFamily = FontFamily.Default,
+    fontWeight = FontWeight.SemiBold,
+    fontSize = 20.sp,
+    lineHeight = 28.sp,
     letterSpacing = 0.sp,
     fontFeatureSettings = "tnum"
 )

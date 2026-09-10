@@ -3,10 +3,10 @@ package io.github.coderirse.watchdog.data.repository.providers
 import io.github.coderirse.watchdog.data.api.MiMoConsoleApi
 import io.github.coderirse.watchdog.data.api.MiMoConsoleParser
 import io.github.coderirse.watchdog.data.local.SettingsStore
-import io.github.coderirse.watchdog.data.local.WebSessionStore
 import io.github.coderirse.watchdog.data.model.PlatformType
 import io.github.coderirse.watchdog.data.model.QuotaInfo
 import io.github.coderirse.watchdog.data.repository.PlatformQuotaProvider
+import io.github.coderirse.watchdog.data.repository.WebSessionAccess
 import io.github.coderirse.watchdog.util.FormatUtils
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -16,17 +16,19 @@ import java.util.Locale
  * 小米 MiMo：官方无"仅凭 API Key"的余额/用量接口（2026-02 实测全部 404/401），
  * 数据来自网页控制台内部接口（platform.xiaomimimo.com 的 /api/v1 路径），
  * 鉴权头 api-platform_ph = 浏览器 Cookie 中的会话值（WebLoginActivity 抓取或用户手动粘贴）。
+ *
+ * 依赖 [WebSessionAccess] 窄接口而非 WebSessionStore 具体类，便于纯 JVM 测试。
  */
 class MiMoProvider(
     private val mimoConsoleApi: MiMoConsoleApi,
-    private val webSessionStore: WebSessionStore,
+    private val webSessionAccess: WebSessionAccess,
     private val settingsStore: SettingsStore
 ) : PlatformQuotaProvider {
 
     override val platform = PlatformType.MIMO
 
     override suspend fun fetch(): QuotaInfo {
-        val session = webSessionStore.getWebSession(platform)
+        val session = webSessionAccess.getWebSession(platform)
             // 无会话：引导进入内嵌登录页（WebView 登录态持久化，会话仍有效时秒抓凭证免输入）
             ?: return QuotaInfo.error(platform, "尚未建立网页会话，点击下方按钮打开登录页获取")
                 .copy(needsRelogin = true)

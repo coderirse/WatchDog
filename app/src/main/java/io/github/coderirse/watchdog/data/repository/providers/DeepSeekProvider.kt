@@ -5,14 +5,15 @@ import io.github.coderirse.watchdog.data.api.DeepSeekApi
 import io.github.coderirse.watchdog.data.api.DeepSeekConsoleApi
 import io.github.coderirse.watchdog.data.api.DeepSeekConsoleParser
 import io.github.coderirse.watchdog.data.local.SettingsStore
-import io.github.coderirse.watchdog.data.local.WebSessionStore
 import io.github.coderirse.watchdog.data.model.DailyModelUsage
 import io.github.coderirse.watchdog.data.model.DailyUsage
 import io.github.coderirse.watchdog.data.model.ModelUsage
+import io.github.coderirse.watchdog.data.model.MonthlyUsageSource
 import io.github.coderirse.watchdog.data.model.PlatformType
 import io.github.coderirse.watchdog.data.model.QuotaInfo
 import io.github.coderirse.watchdog.data.repository.PlatformQuotaProvider
 import io.github.coderirse.watchdog.data.repository.ProviderSupport
+import io.github.coderirse.watchdog.data.repository.WebSessionAccess
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import java.util.Calendar
@@ -33,7 +34,7 @@ import java.util.Locale
 class DeepSeekProvider(
     private val deepSeekApi: DeepSeekApi,
     private val deepSeekConsoleApi: DeepSeekConsoleApi,
-    private val webSessionStore: WebSessionStore,
+    private val webSessionAccess: WebSessionAccess,
     private val settingsStore: SettingsStore
 ) : PlatformQuotaProvider {
 
@@ -46,12 +47,15 @@ class DeepSeekProvider(
         } else {
             fetchConsoleOnly()
         }
-        // 官方-only（无控制台数据）时叠加本地月度估算
+        // 官方-only（无控制台数据）时叠加本地月度估算，并标注为估算口径
         return if (raw.isAvailable && raw.errorMessage == null && raw.dataSourceLabel == null) {
             val balance = raw.totalBalance.toDoubleOrNull()
             if (balance != null) {
                 val usage = settingsStore.recordBalanceAndGetMonthlyUsage(platform, balance)
-                raw.copy(monthlyUsage = ProviderSupport.fmtUsage(usage))
+                raw.copy(
+                    monthlyUsage = ProviderSupport.fmtUsage(usage),
+                    monthlyUsageSource = MonthlyUsageSource.LOCAL_ESTIMATE
+                )
             } else raw
         } else raw
     }
@@ -60,32 +64,36 @@ class DeepSeekProvider(
         val response = deepSeekApi.getBalance(authHeader)
         if (!response.isSuccessful) return ProviderSupport.httpError(platform, response.code())
 
-        val body = response.body()
-        val balance = body?.balanceInfos?.firstOrNull()
+        val body = response.body() ?: return ProviderSupport.emptyResponse(platform)
+        val balance = body.balanceInfos?.firstOrNull()
+        // 官方接口返回 is_available=true 但余额字段缺失时不冒充 0.00：
+        // 假 0 会污染总额汇总并让卡片误判为"正常"，故如实报错
+        if (body.isAvailable && balance?.totalBalance.isNullOrBlank()) {
+            return QuotaInfo.error(platform, "官方接口未返回余额字段，请稍后重试")
+        }
         val base = QuotaInfo(
             platform = platform,
-            isAvailable = body?.isAvailable ?: false,
+            isAvailable = body.isAvailable,
             isConfigured = true,
-            totalBalance = balance?.totalBalance ?: "0.00",
+            totalBalance = balance?.totalBalance ?: "",
             currency = balance?.currency ?: "CNY"
         )
 
         // 可选增强：使用 WebLoginActivity 抓取的网页会话（userToken + Cookie）读取控制台
         // 真实用量明细。会话缺失时保持官方模式。
-        val session = runCatching { webSessionStore.getWebSession(platform) }.getOrNull()
+        val session = runCatching { webSessionAccess.getWebSession(platform) }.getOrNull()
         if (session.isNullOrBlank()) {
             if (BuildConfig.DEBUG) android.util.Log.d("WatchDogRepo", "DeepSeek: no console session, official-only")
             return base
         }
 
-        val cookie = runCatching { webSessionStore.getWebSessionCookie(platform) }.getOrNull()
+        val cookie = runCatching { webSessionAccess.getWebSessionCookie(platform) }.getOrNull()
         val console = runCatching { fetchConsole(session, cookie) }.getOrNull()
         // 已配置会话但控制台抓取失败：回退官方模式，并在卡片标注诊断码
         // （区分 WAF 拦截 429 / 接口变更 404 / 会话失效 401，便于定位）
         val consoleData = console?.data
             ?: return base.copy(
-                consoleDiag = "控制台抓取失败 HTTP " +
-                    (console?.codes?.takeIf { it.isNotEmpty() }?.joinToString("/") ?: "网络异常")
+                consoleDiag = consoleFailureDiag(console?.codes.orEmpty())
             )
 
         val wallet = consoleData.summary?.primaryBalance
@@ -93,7 +101,10 @@ class DeepSeekProvider(
         return base.copy(
             totalBalance = wallet?.let { ProviderSupport.fmtAmount(it.balance) } ?: base.totalBalance,
             currency = currency,
-            monthlyUsage = consoleData.monthlyUsage?.let { ProviderSupport.fmtUsage(it) } ?: base.monthlyUsage,
+            // 控制台有真实本月用量时以其为准（SERVER 口径，QuotaInfo 默认值）；
+            // 缺失则留空，由外层 fetch() 用本地增量累计补齐并标注估算
+            monthlyUsage = consoleData.monthlyUsage?.let { ProviderSupport.fmtUsage(it) }
+                ?: base.monthlyUsage,
             modelUsages = consoleData.modelUsages,
             dailyUsage = consoleData.dailyUsage,
             dailyModelUsage = consoleData.dailyModelUsage,
@@ -115,27 +126,53 @@ class DeepSeekProvider(
         val codes: List<Int>
     )
 
-    /** DeepSeek 无 API Key 时的控制台-only 数据源；会话缺失/失效则回退 notConfigured。 */
+    /** DeepSeek 无 API Key 时的控制台-only 数据源；会话缺失返回未配置，抓取失败如实报错。 */
     private suspend fun fetchConsoleOnly(): QuotaInfo {
-        val session = runCatching { webSessionStore.getWebSession(platform) }.getOrNull()
+        val session = runCatching { webSessionAccess.getWebSession(platform) }.getOrNull()
         if (session.isNullOrBlank()) return QuotaInfo.notConfigured(platform)
-        val cookie = runCatching { webSessionStore.getWebSessionCookie(platform) }.getOrNull()
+        val cookie = runCatching { webSessionAccess.getWebSessionCookie(platform) }.getOrNull()
         val console = runCatching { fetchConsole(session, cookie) }.getOrNull()
-        val data = console?.data ?: return QuotaInfo.notConfigured(platform)
+
+        val data = console?.data
+            ?: return QuotaInfo
+                .error(platform, consoleFailureMessage(console?.codes.orEmpty()))
+                .copy(needsRelogin = true, consoleDiag = consoleFailureDiag(console?.codes.orEmpty()))
+
         val wallet = data.summary?.primaryBalance
-        val currency = wallet?.currency?.takeIf { it.isNotBlank() } ?: "CNY"
+            ?: return QuotaInfo
+                .error(platform, "控制台未返回余额信息，接口可能已变更")
+                .copy(consoleDiag = "用户汇总解析无余额字段")
+
         return QuotaInfo(
             platform = platform,
-            isAvailable = wallet != null,
+            isAvailable = true,
             isConfigured = true,
-            totalBalance = wallet?.let { ProviderSupport.fmtAmount(it.balance) } ?: "0.00",
-            currency = currency,
-            monthlyUsage = data.monthlyUsage?.let { ProviderSupport.fmtUsage(it) } ?: "0.00",
+            totalBalance = ProviderSupport.fmtAmount(wallet.balance),
+            currency = wallet.currency?.takeIf { it.isNotBlank() } ?: "CNY",
+            monthlyUsage = data.monthlyUsage?.let { ProviderSupport.fmtUsage(it) } ?: "",
+            monthlyUsageSource = if (data.monthlyUsage != null) {
+                MonthlyUsageSource.SERVER
+            } else {
+                MonthlyUsageSource.LOCAL_ESTIMATE
+            },
             modelUsages = data.modelUsages,
             dailyUsage = data.dailyUsage,
             dailyModelUsage = data.dailyModelUsage,
             dataSourceLabel = "网页控制台"
         )
+    }
+
+    /** 控制台抓取失败的诊断码（保留原始 HTTP 码，便于区分 WAF/接口变更/会话失效）。 */
+    private fun consoleFailureDiag(codes: List<Int>): String =
+        "控制台抓取失败 HTTP " + codes.takeIf { it.isNotEmpty() }?.joinToString("/").orEmpty()
+
+    /** 按三路 HTTP 码给出可读失败原因（用户可见文案，不再直接把状态码丢给用户）。 */
+    private fun consoleFailureMessage(codes: List<Int>): String = when {
+        codes.isEmpty() -> "控制台连接失败，请检查网络后重试"
+        codes.any { it == 401 || it == 403 } -> "网页会话已过期，请重新登录"
+        codes.any { it == 429 } -> "控制台请求过于频繁被拦截，请稍后重试"
+        codes.all { it == 200 } -> "控制台响应格式无法识别，接口可能已变更"
+        else -> "控制台读取失败（HTTP ${codes.joinToString("/")}），请稍后重试"
     }
 
     /**

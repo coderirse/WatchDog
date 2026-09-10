@@ -23,6 +23,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
@@ -44,6 +45,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -64,6 +66,7 @@ import io.github.coderirse.watchdog.R
 import io.github.coderirse.watchdog.di.LocalAppContainer
 import io.github.coderirse.watchdog.data.model.PlatformType
 import io.github.coderirse.watchdog.ui.components.ApiKeyDialog
+import io.github.coderirse.watchdog.ui.components.ListDivider
 import io.github.coderirse.watchdog.ui.components.PlatformLogo
 import io.github.coderirse.watchdog.ui.theme.WatchDogTheme
 import java.util.Locale
@@ -78,10 +81,23 @@ fun SettingsScreen(
     val uiState by viewModel.uiState.collectAsState()
     val context = LocalContext.current
 
+    // 预警已开启但系统通知权限缺失/被拒：通知会静默丢弃，必须显式告知用户并提供系统设置入口
+    var notificationPermissionGranted by remember { mutableStateOf(true) }
+
     // 开启余额预警时，在 Android 13+ 请求通知权限；未授权时通知会静默跳过
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
-    ) { /* 结果无需处理 */ }
+    ) { granted -> notificationPermissionGranted = granted }
+
+    LaunchedEffect(uiState.balanceAlertEnabled) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            notificationPermissionGranted = ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.POST_NOTIFICATIONS
+            ) == PackageManager.PERMISSION_GRANTED
+        }
+    }
+    val notificationsBlocked = uiState.balanceAlertEnabled && !notificationPermissionGranted
 
     fun requestNotificationPermissionIfNeeded() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
@@ -105,7 +121,19 @@ fun SettingsScreen(
             if (enabled) requestNotificationPermissionIfNeeded()
         },
         onEditBalanceThreshold = { viewModel.showBalanceThresholdDialog() },
-        onEditBalanceFraction = { viewModel.showBalanceFractionDialog() }
+        onEditBalanceFraction = { viewModel.showBalanceFractionDialog() },
+        notificationsBlocked = notificationsBlocked,
+        onOpenNotificationSettings = {
+            runCatching {
+                context.startActivity(
+                    android.content.Intent(
+                        android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS
+                    ).apply {
+                        putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, context.packageName)
+                    }
+                )
+            }
+        }
     )
 
     uiState.showApiKeyDialog?.let { platform ->
@@ -168,7 +196,9 @@ fun SettingsContent(
     onEditInitialBalance: () -> Unit,
     onToggleBalanceAlert: (Boolean) -> Unit,
     onEditBalanceThreshold: () -> Unit,
-    onEditBalanceFraction: () -> Unit
+    onEditBalanceFraction: () -> Unit,
+    notificationsBlocked: Boolean = false,
+    onOpenNotificationSettings: () -> Unit = {}
 ) {
     Scaffold(
         topBar = {
@@ -195,6 +225,13 @@ fun SettingsContent(
             if (uiState.encryptionDegraded) {
                 item(key = "encryption_warning") {
                     EncryptionWarningCard()
+                }
+            }
+
+            // 预警已开启但系统通知被拒：明确告知，否则用户以为预警在生效
+            if (notificationsBlocked) {
+                item(key = "notification_blocked") {
+                    NotificationBlockedCard(onOpenNotificationSettings)
                 }
             }
 
@@ -280,13 +317,19 @@ private fun PlatformSettingsCard(
 ) {
     val platform = platformState.platform
     val hasKey = platformState.apiKey.isNotEmpty()
+    val canEnable = hasKey || platformState.webSessionConfigured
+    val host = consoleHost(platform)
+    val ctx = LocalContext.current
 
-    Card(
-        onClick = onClick,
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+    Card(onClick = onClick, modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp)) {
+            // 标题行：整卡唯一的"可点击"信号是尾部 chevron，避免用户看不出能点开配置
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 PlatformLogo(platform = platform, size = 32)
                 Spacer(modifier = Modifier.width(12.dp))
                 Column(modifier = Modifier.weight(1f)) {
@@ -307,21 +350,20 @@ private fun PlatformSettingsCard(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
-                Switch(
-                    checked = platformState.isEnabled,
-                    onCheckedChange = onToggleEnabled,
-                    enabled = hasKey || platformState.webSessionConfigured
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                    contentDescription = stringResource(
+                        R.string.settings_edit_platform,
+                        platform.displayName
+                    ),
+                    tint = MaterialTheme.colorScheme.outline
                 )
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
-            val host = consoleHost(platform)
-            val ctx = LocalContext.current
-            Text(
-                text = stringResource(R.string.settings_create_key_hint, host),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.clickable {
+            Spacer(modifier = Modifier.height(6.dp))
+            // 外链改为 TextButton：原来的纯文字 clickable 热区仅约 16dp 高
+            TextButton(
+                onClick = {
                     runCatching {
                         ctx.startActivity(
                             android.content.Intent(
@@ -330,25 +372,61 @@ private fun PlatformSettingsCard(
                             )
                         )
                     }
-                }
-            )
+                },
+                modifier = Modifier.padding(start = 8.dp)
+            ) {
+                Text(
+                    text = stringResource(R.string.settings_create_key_hint, host),
+                    style = MaterialTheme.typography.labelMedium
+                )
+            }
 
             if (platform == PlatformType.KIMI_CODE) {
-                Spacer(modifier = Modifier.height(2.dp))
                 Text(
                     text = stringResource(R.string.settings_kimi_code_independent),
                     style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.outline
+                    color = MaterialTheme.colorScheme.outline,
+                    modifier = Modifier.padding(horizontal = 16.dp)
+                )
+            }
+
+            Spacer(modifier = Modifier.height(6.dp))
+            ListDivider(leadingInset = 16.dp)
+
+            // 开关独立成行：避免与整卡点击区嵌套（误触 + 读屏语义冲突）
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = stringResource(R.string.settings_enable_switch),
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.weight(1f)
+                )
+                Switch(
+                    checked = platformState.isEnabled,
+                    onCheckedChange = onToggleEnabled,
+                    enabled = canEnable
+                )
+            }
+            if (!canEnable) {
+                Text(
+                    text = stringResource(R.string.settings_switch_disabled_hint),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.outline,
+                    modifier = Modifier.padding(horizontal = 16.dp)
                 )
             }
 
             // 网页控制台会话配置（小米 MiMo 必需；DeepSeek 可选增强）
             if (platform.supportsConsoleSession) {
-                Spacer(modifier = Modifier.height(10.dp))
-                HorizontalDivider()
-                Spacer(modifier = Modifier.height(10.dp))
+                ListDivider(leadingInset = 16.dp)
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 16.dp, end = 8.dp, top = 4.dp, bottom = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
@@ -376,7 +454,6 @@ private fun PlatformSettingsCard(
                         Text(stringResource(R.string.settings_console_session_edit))
                     }
                 }
-                Spacer(modifier = Modifier.height(2.dp))
                 Text(
                     text = if (platform == PlatformType.MIMO) {
                         stringResource(R.string.settings_mimo_session_desc)
@@ -384,16 +461,17 @@ private fun PlatformSettingsCard(
                         stringResource(R.string.settings_deepseek_session_desc)
                     },
                     style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.outline
+                    color = MaterialTheme.colorScheme.outline,
+                    modifier = Modifier.padding(horizontal = 16.dp)
                 )
             }
 
             if (platform == PlatformType.VOLCENGINE_ARK) {
-                Spacer(modifier = Modifier.height(10.dp))
-                HorizontalDivider()
-                Spacer(modifier = Modifier.height(10.dp))
+                ListDivider(leadingInset = 16.dp)
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 16.dp, end = 8.dp, top = 4.dp, bottom = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
@@ -414,11 +492,11 @@ private fun PlatformSettingsCard(
                         Text(stringResource(R.string.settings_ark_edit_balance))
                     }
                 }
-                Spacer(modifier = Modifier.height(2.dp))
                 Text(
                     text = stringResource(R.string.settings_ark_initial_balance_desc),
                     style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.outline
+                    color = MaterialTheme.colorScheme.outline,
+                    modifier = Modifier.padding(horizontal = 16.dp)
                 )
             }
         }
@@ -536,6 +614,41 @@ private fun EncryptionWarningCard() {
                 text = stringResource(R.string.settings_encryption_degraded),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onErrorContainer
+            )
+        }
+    }
+}
+
+// ===== 通知权限缺失告警卡 =====
+
+/**
+ * 预警开关已开但系统通知权限缺失：原实现只在开启瞬间请求一次权限，
+ * 用户拒绝后通知会被静默丢弃而界面毫无提示，这里补上说明与系统设置入口。
+ */
+@Composable
+private fun NotificationBlockedCard(onOpenSettings: () -> Unit) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
+    ) {
+        Row(
+            modifier = Modifier.padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = Icons.Filled.Warning,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onErrorContainer,
+                modifier = Modifier.size(20.dp)
+            )
+            Spacer(modifier = Modifier.width(10.dp))
+            Text(
+                text = stringResource(R.string.settings_notification_denied),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onErrorContainer,
+                modifier = Modifier
+                    .weight(1f)
+                    .clickable(onClick = onOpenSettings)
             )
         }
     }

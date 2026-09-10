@@ -49,6 +49,8 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import io.github.coderirse.watchdog.R
+import io.github.coderirse.watchdog.ui.components.ListDivider
+import io.github.coderirse.watchdog.ui.components.ListDividerIconInset
 import io.github.coderirse.watchdog.ui.theme.WatchDogTheme
 
 private const val REPO_URL = "https://github.com/coderirse/WatchDog"
@@ -146,7 +148,7 @@ fun MoreContent(
                             Spacer(modifier = Modifier.height(12.dp))
                         }
                     }
-                    RowDivider()
+                    ListDivider(leadingInset = ListDividerIconInset)
                     MoreRow(
                         icon = Icons.Filled.Star,
                         title = stringResource(R.string.more_github_repo),
@@ -168,7 +170,7 @@ fun MoreContent(
                         onClick = { openUrl(LICENSE_URL) },
                         trailing = { TrailingArrow() }
                     )
-                    RowDivider()
+                    ListDivider(leadingInset = ListDividerIconInset)
                     MoreRow(
                         icon = Icons.Filled.Build,
                         title = stringResource(R.string.more_open_libs),
@@ -196,7 +198,7 @@ fun MoreContent(
                             Spacer(modifier = Modifier.height(12.dp))
                         }
                     }
-                    RowDivider()
+                    ListDivider(leadingInset = ListDividerIconInset)
                     MoreRow(
                         icon = Icons.Filled.Check,
                         title = stringResource(R.string.more_version_info),
@@ -234,14 +236,6 @@ private fun GroupHeader(title: String) {
         color = MaterialTheme.colorScheme.primary,
         fontWeight = FontWeight.Bold,
         modifier = Modifier.padding(start = 4.dp, top = 4.dp)
-    )
-}
-
-@Composable
-private fun RowDivider() {
-    HorizontalDivider(
-        modifier = Modifier.padding(start = 52.dp),
-        color = MaterialTheme.colorScheme.outlineVariant
     )
 }
 

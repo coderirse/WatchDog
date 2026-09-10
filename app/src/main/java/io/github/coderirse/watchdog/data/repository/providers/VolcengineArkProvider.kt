@@ -1,6 +1,7 @@
 package io.github.coderirse.watchdog.data.repository.providers
 
 import io.github.coderirse.watchdog.data.local.SettingsStore
+import io.github.coderirse.watchdog.data.model.MonthlyUsageSource
 import io.github.coderirse.watchdog.data.model.PlatformType
 import io.github.coderirse.watchdog.data.model.QuotaInfo
 import io.github.coderirse.watchdog.data.repository.PlatformQuotaProvider
@@ -39,6 +40,7 @@ class VolcengineArkProvider(
             isConfigured = true,
             totalBalance = String.format(Locale.US, "%.2f", initialBalance),
             monthlyUsage = if (usage < 0.01) "0.00" else String.format(Locale.US, "%.2f", usage),
+            monthlyUsageSource = MonthlyUsageSource.LOCAL_ESTIMATE,
             currency = "CNY",
             isEstimate = true
         )

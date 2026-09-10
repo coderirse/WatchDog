@@ -29,7 +29,7 @@ class GlmProvider(
         val apiKey = settingsStore.getApiKey(platform) ?: return QuotaInfo.notConfigured(platform)
         val response = glmApi.getTokenAccounts("Bearer $apiKey")
         if (!response.isSuccessful) return ProviderSupport.httpError(platform, response.code())
-        val body = response.body() ?: return QuotaInfo.error(platform, "响应为空")
+        val body = response.body() ?: return ProviderSupport.emptyResponse(platform)
 
         val base = buildResourceQuota(body)
 

@@ -43,6 +43,12 @@ class QuotaRepositoryTest {
         var withSession: Set<PlatformType> = emptySet()
     ) : WebSessionAccess {
         override suspend fun hasWebSession(platform: PlatformType) = platform in withSession
+
+        /** 会话-only 平台视为已配置时，Repository 不读令牌本身，返回占位值即可。 */
+        override suspend fun getWebSession(platform: PlatformType): String? =
+            if (platform in withSession) "test-session-token" else null
+
+        override suspend fun getWebSessionCookie(platform: PlatformType): String? = null
     }
 
     private class FakeProvider(

@@ -105,6 +105,7 @@ class AppContainer(context: Context) {
     val webSessionStore: WebSessionStore = WebSessionStore(context.applicationContext)
 
     // Repository：编排层 + 各平台 Provider（新增平台 = 新增一个 Provider 并在此注册）
+    // Provider 依赖 WebSessionAccess 窄接口（webSessionStore 为其实现），便于纯 JVM 测试
     val quotaRepository: QuotaRepository = QuotaRepository(
         configSource = settingsStore,
         cache = quotaCacheStore,

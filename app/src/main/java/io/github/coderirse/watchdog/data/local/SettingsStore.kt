@@ -6,12 +6,13 @@ import android.util.Log
 import androidx.core.content.edit
 import io.github.coderirse.watchdog.data.model.PlatformType
 import io.github.coderirse.watchdog.data.repository.PlatformConfigSource
+import io.github.coderirse.watchdog.data.repository.RefreshIntervalSource
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 class SettingsStore(
     context: Context
-) : PlatformConfigSource {
+) : PlatformConfigSource, RefreshIntervalSource {
     private val prefs: SharedPreferences = context.applicationContext.getSharedPreferences(
         "watchdog_settings",
         Context.MODE_PRIVATE
@@ -19,7 +20,21 @@ class SettingsStore(
 
     suspend fun saveApiKey(platform: PlatformType, apiKey: String) {
         withContext(Dispatchers.IO) {
-            prefs.edit { putString(getApiKeyKey(platform), encryptApiKey(apiKey)) }
+            val stored = SecureCipher.encrypt(apiKey)
+            val degraded = SecureCipher.isDegraded(stored, apiKey)
+            // 密文与降级标记在同一编辑事务内落盘，避免两次写入之间状态不一致
+            prefs.edit {
+                putString(getApiKeyKey(platform), stored)
+                if (degraded) {
+                    putBoolean(KEY_ENCRYPTION_DEGRADED, true)
+                } else {
+                    // 本轮加密成功：清除历史降级标记，避免一次失败后永久显示"明文存储"告警
+                    remove(KEY_ENCRYPTION_DEGRADED)
+                }
+            }
+            if (degraded) {
+                Log.w(TAG, "Android Keystore 不可用，API Key 回退为明文存储")
+            }
         }
     }
 
@@ -64,7 +79,7 @@ class SettingsStore(
         }
     }
 
-    suspend fun getAutoRefreshInterval(): Int {
+    override suspend fun getAutoRefreshInterval(): Int {
         return withContext(Dispatchers.IO) {
             prefs.getString("auto_refresh_interval", "5")?.toIntOrNull() ?: 5
         }
@@ -79,17 +94,11 @@ class SettingsStore(
 
     // ===== API Key 加密存储（Android Keystore AES-GCM，实现见 SecureCipher） =====
 
-    private fun encryptApiKey(plain: String): String {
-        val encrypted = SecureCipher.encrypt(plain)
-        if (SecureCipher.lastDegraded) {
-            // Keystore 不可用时已回退明文存储，记录告警日志 + 持久化降级标记，
-            // 供设置页提示用户敏感数据当前未加密。
-            Log.w(TAG, "Android Keystore 不可用，API Key 回退为明文存储")
-            markEncryptionDegraded()
-        }
-        return encrypted
-    }
-
+    /**
+     * 降级判定基于密文与明文的比较（[SecureCipher.isDegraded]），不再依赖全局可变标志：
+     * 并行保存多个平台时，旧实现的全局标志存在 TOCTOU——一次成功加密会把另一次失败的
+     * 降级告警清掉，导致设置页不再提示"密钥以明文保存"。写入逻辑见 [saveApiKey]。
+     */
     private fun decryptApiKey(stored: String): String? = SecureCipher.decrypt(stored)
 
     // ===== 本月用量追踪 =====
@@ -203,14 +212,7 @@ class SettingsStore(
 
     // ===== 加密降级状态（Keystore 不可用时 API Key 回退明文） =====
 
-    /** 标记加密已降级为明文存储（幂等，持久化供设置页提示）。 */
-    private fun markEncryptionDegraded() {
-        runCatching {
-            prefs.edit { putBoolean(KEY_ENCRYPTION_DEGRADED, true) }
-        }
-    }
-
-    /** 读取加密是否已降级为明文存储。 */
+    /** 读取加密是否已降级为明文存储（标记由 [encryptApiKey] 在写入事务内维护）。 */
     suspend fun isEncryptionDegraded(): Boolean {
         return withContext(Dispatchers.IO) {
             prefs.getBoolean(KEY_ENCRYPTION_DEGRADED, false)

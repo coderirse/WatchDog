@@ -1,4 +1,4 @@
-package io.github.coderirse.watchdog.ui.components
+﻿package io.github.coderirse.watchdog.ui.components
 
 import android.content.res.Configuration
 import androidx.compose.animation.AnimatedVisibility
@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -28,6 +29,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
@@ -41,12 +43,17 @@ import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import io.github.coderirse.watchdog.R
 import io.github.coderirse.watchdog.data.model.ModelUsage
+import io.github.coderirse.watchdog.data.model.MonthlyUsageSource
 import io.github.coderirse.watchdog.data.model.PlatformType
 import io.github.coderirse.watchdog.data.model.QuotaInfo
 import io.github.coderirse.watchdog.data.model.QuotaWindow
@@ -60,12 +67,21 @@ import io.github.coderirse.watchdog.ui.theme.darkened
 import io.github.coderirse.watchdog.ui.theme.depletedBrush
 import io.github.coderirse.watchdog.ui.theme.onBrandFor
 import io.github.coderirse.watchdog.ui.theme.warningBlendBrush
+import io.github.coderirse.watchdog.util.DateFormats
 import io.github.coderirse.watchdog.util.FormatUtils
-import java.text.SimpleDateFormat
-import java.util.Date
 import java.util.Locale
 import kotlin.math.floor
 
+/**
+ * 单个平台的额度卡。已配置且无异常 → 品牌渐变卡；未配置/查询异常 → 中性卡。
+ *
+ * 本次改进要点（都围绕"避免误读"）：
+ * 1. 进度条一律带明确文字前缀（"剩余 x%"/"已用 x%"）：此前同一组件在余额场景传剩余占比、
+ *    在订阅窗口传已用占比、在模型明细里传"相对最大模型的占比"，三种相反语义外观完全相同；
+ * 2. 数值未知时显示占位符"—"而非 0：假 0 会被读成"余额/用量就是 0"；
+ * 3. 本地推算的"本月用量"标注（估算），与火山方舟的估算口径统一；
+ * 4. "调用明细"展开行补 role/stateDescription 与 48dp 触控高度。
+ */
 @Composable
 fun PlatformQuotaCard(
     quotaInfo: QuotaInfo,
@@ -89,7 +105,6 @@ private fun NeutralQuotaCard(
 ) {
     Card(
         modifier = modifier.fillMaxWidth().animateContentSize(),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceVariant
         )
@@ -122,12 +137,21 @@ private fun NeutralQuotaCard(
                 color = if (q.errorMessage != null) MaterialTheme.colorScheme.error
                 else MaterialTheme.colorScheme.onSurfaceVariant
             )
-            // 会话失效且保存了账密：一键拉起内嵌登录页自动重新登录
+            // 需要重新登录网页会话时给明确的按钮（而非让用户去设置页里找）
             if (q.needsRelogin && onRelogin != null) {
                 Spacer(modifier = Modifier.height(10.dp))
-                androidx.compose.material3.Button(onClick = { onRelogin(q.platform) }) {
+                TextButton(onClick = { onRelogin(q.platform) }) {
                     Text(stringResource(R.string.quota_relogin_button))
                 }
+            }
+            // 控制台抓取失败的诊断码（如 HTTP 429/200），便于定位 WAF/接口变更
+            q.consoleDiag?.let { diag ->
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = diag,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.outline
+                )
             }
         }
     }
@@ -167,75 +191,77 @@ private fun BrandQuotaCard(q: QuotaInfo, modifier: Modifier = Modifier) {
         LocalOnBrandSecondary provides onBrand.copy(alpha = 0.85f),
         LocalBrandOverlay provides onBrand.copy(alpha = 0.12f)
     ) {
-    Card(
-        modifier = modifier.fillMaxWidth().animateContentSize(),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
-    ) {
-        Box(modifier = Modifier.fillMaxWidth().background(brush)) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                // 头部：Logo 水印 + 名称 + 状态药丸
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    PlatformLogo(
-                        platform = q.platform,
-                        backgroundColor = LocalBrandOverlay.current,
-                        initialsColor = LocalOnBrand.current
-                    )
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Text(
-                        q.platform.displayName,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = LocalOnBrand.current,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f)
-                    )
-                    StatusPill(statusText)
-                    if (q.isEstimate && !estimatePending) {
-                        Spacer(modifier = Modifier.width(6.dp))
-                        StatusPill(stringResource(R.string.status_estimate))
+        Card(
+            modifier = modifier.fillMaxWidth().animateContentSize(),
+            colors = CardDefaults.cardColors(containerColor = Color.Transparent)
+        ) {
+            Box(modifier = Modifier.fillMaxWidth().background(brush)) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    // 头部：Logo 水印 + 名称 + 状态药丸
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        PlatformLogo(
+                            platform = q.platform,
+                            backgroundColor = LocalBrandOverlay.current,
+                            initialsColor = LocalOnBrand.current
+                        )
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Text(
+                            q.platform.displayName,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = LocalOnBrand.current,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f)
+                        )
+                        StatusPill(statusText)
+                        if (q.isEstimate && !estimatePending) {
+                            Spacer(modifier = Modifier.width(6.dp))
+                            StatusPill(stringResource(R.string.status_estimate))
+                        }
+                        if (q.isStale) {
+                            Spacer(modifier = Modifier.width(6.dp))
+                            StatusPill(stringResource(R.string.status_cached))
+                        }
                     }
-                    if (q.isStale) {
-                        Spacer(modifier = Modifier.width(6.dp))
-                        StatusPill(stringResource(R.string.status_cached))
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    when {
+                        q.isSubscriptionMode -> SubscriptionContent(q)
+                        estimatePending -> EstimatePendingContent(q)
+                        else -> BalanceContent(q, fraction)
+                    }
+
+                    if (!estimatePending) {
+                        // 模型调用明细（可展开）
+                        Spacer(modifier = Modifier.height(10.dp))
+                        HorizontalDivider(color = LocalOnBrand.current.copy(alpha = 0.24f))
+                        ModelUsageSection(q)
+
+                        // 控制台抓取失败诊断（已配置会话但数据回退官方接口时提示失败原因）
+                        q.consoleDiag?.let { diag ->
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text(
+                                text = diag,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = LocalOnBrandSecondary.current
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+                        // 数据来源（网页控制台等非官方接口）降级为脚注小字，不再占用头部药丸
+                        Text(
+                            text = listOfNotNull(
+                                q.dataSourceLabel,
+                                stringResource(R.string.quota_updated_at, DateFormats.dateTime(q.lastUpdated))
+                            ).joinToString(" · "),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = LocalOnBrandSecondary.current
+                        )
                     }
                 }
-                Spacer(modifier = Modifier.height(14.dp))
-
-                when {
-                    q.isSubscriptionMode -> SubscriptionContent(q)
-                    estimatePending -> EstimatePendingContent(q)
-                    else -> BalanceContent(q, fraction)
-                }
-
-                // 模型调用明细
-                Spacer(modifier = Modifier.height(10.dp))
-                HorizontalDivider(color = LocalOnBrand.current.copy(alpha = 0.24f))
-                ModelUsageSection(q)
-
-                // 控制台抓取失败诊断（已配置会话但数据回退官方接口时提示失败原因）
-                q.consoleDiag?.let { diag ->
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Text(
-                        text = diag,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = LocalOnBrandSecondary.current
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(10.dp))
-                // 数据来源（网页控制台等非官方接口）降级为脚注小字，不再占用头部药丸
-                Text(
-                    text = listOfNotNull(
-                        q.dataSourceLabel,
-                        stringResource(R.string.quota_updated_at, formatTime(q.lastUpdated))
-                    ).joinToString(" · "),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = LocalOnBrandSecondary.current
-                )
             }
         }
-    }
     }
 }
 
@@ -269,6 +295,16 @@ private fun remainingFraction(q: QuotaInfo): Float? {
     return null
 }
 
+/** 余额文本：空/不可解析时显示占位符，避免把"没有数据"渲染成"0.00"。 */
+private fun balanceText(q: QuotaInfo): String =
+    q.totalBalance.toDoubleOrNull()?.let { String.format(Locale.US, "%.2f", it) }
+        ?: q.totalBalance.takeIf { it.isNotBlank() }
+        ?: "—"
+
+/** 百分比取整文案（进度条前缀用）。 */
+private fun percentText(fraction: Float): String =
+    String.format(Locale.US, "%.0f", fraction * 100f)
+
 // ===== 按量付费余额模式 =====
 
 @Composable
@@ -278,13 +314,14 @@ private fun BalanceContent(q: QuotaInfo, fraction: Float?) {
     val balanceLabel = if (q.platform == PlatformType.GLM)
         stringResource(R.string.quota_label_remaining_token)
     else stringResource(R.string.quota_label_total_balance)
-    val secondaryLabel = when (q.platform) {
-        PlatformType.GLM -> stringResource(R.string.quota_label_total_used)
-        PlatformType.SILICONFLOW -> stringResource(R.string.quota_label_available_balance)
+    val monthlyLabel = when {
+        q.platform == PlatformType.GLM -> stringResource(R.string.quota_label_total_used)
+        q.platform == PlatformType.SILICONFLOW -> stringResource(R.string.quota_label_available_balance)
+        q.isMonthlyUsageEstimated -> stringResource(R.string.quota_label_monthly_usage_estimated)
         else -> stringResource(R.string.quota_label_monthly_usage)
     }
     // 硅基流动展示专用 availableBalance 字段，不再复用 monthlyUsage 造成语义错位
-    val secondaryValue = if (q.platform == PlatformType.SILICONFLOW) {
+    val monthlyValue = if (q.platform == PlatformType.SILICONFLOW) {
         q.availableBalance ?: q.monthlyUsage
     } else {
         q.monthlyUsage
@@ -293,19 +330,23 @@ private fun BalanceContent(q: QuotaInfo, fraction: Float?) {
     Text(balanceLabel, style = MaterialTheme.typography.labelMedium, color = onBrandSecondary)
     Spacer(modifier = Modifier.height(2.dp))
     Row(verticalAlignment = Alignment.Bottom) {
-        Text(q.totalBalance, style = balanceNumeral, color = onBrand)
+        Text(balanceText(q), style = balanceNumeral, color = onBrand)
         Spacer(modifier = Modifier.width(6.dp))
         Text(
             q.currency,
             style = MaterialTheme.typography.titleSmall,
             color = onBrandSecondary,
-            modifier = Modifier.padding(bottom = 4.dp)
+            modifier = Modifier.padding(bottom = 6.dp)
         )
     }
 
     if (fraction != null) {
         Spacer(modifier = Modifier.height(10.dp))
-        BrandProgressBar(progress = fraction)
+        // 进度条语义前缀：这里画的是"剩余"占比，必须写清楚
+        BrandProgressBar(
+            progress = fraction,
+            caption = stringResource(R.string.quota_progress_remaining, percentText(fraction))
+        )
         if (q.platform == PlatformType.GLM) {
             Spacer(modifier = Modifier.height(4.dp))
             Text(
@@ -318,8 +359,13 @@ private fun BalanceContent(q: QuotaInfo, fraction: Float?) {
 
     Spacer(modifier = Modifier.height(10.dp))
     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-        Text(secondaryLabel, style = MaterialTheme.typography.bodySmall, color = onBrandSecondary)
-        Text("$secondaryValue ${q.currency}", style = MaterialTheme.typography.bodySmall, color = onBrand)
+        Text(monthlyLabel, style = MaterialTheme.typography.bodySmall, color = onBrandSecondary)
+        Text(
+            text = monthlyValue.ifBlank { stringResource(R.string.quota_value_unknown) } +
+                if (monthlyValue.isBlank()) "" else " ${q.currency}",
+            style = MaterialTheme.typography.bodySmall,
+            color = onBrand
+        )
     }
 }
 
@@ -337,15 +383,19 @@ private fun EstimatePendingContent(q: QuotaInfo) {
     Spacer(modifier = Modifier.height(10.dp))
     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
         Text(
-            stringResource(R.string.quota_label_monthly_usage),
+            stringResource(R.string.quota_label_monthly_usage_estimated),
             style = MaterialTheme.typography.bodySmall,
             color = onBrandSecondary
         )
-        Text("${q.monthlyUsage} ${q.currency}", style = MaterialTheme.typography.bodySmall, color = onBrand)
+        Text(
+            "${q.monthlyUsage.ifBlank { "0.00" }} ${q.currency}",
+            style = MaterialTheme.typography.bodySmall,
+            color = onBrand
+        )
     }
 }
 
-// ===== 订阅配额模式（Kimi Code） =====
+// ===== 订阅配额模式（Kimi Code / MiMo Token Plan） =====
 
 @Composable
 private fun SubscriptionContent(q: QuotaInfo) {
@@ -393,8 +443,13 @@ private fun SubscriptionContent(q: QuotaInfo) {
         val limit = window.limit
         val used = window.used
         if (limit != null && limit > 0 && used != null) {
+            val usedFraction = (used / limit).toFloat().coerceIn(0f, 1f)
             Spacer(modifier = Modifier.height(4.dp))
-            BrandProgressBar(progress = (used / limit).toFloat().coerceIn(0f, 1f))
+            // 同一组件的语义前缀：订阅窗口画的是"已用"占比
+            BrandProgressBar(
+                progress = usedFraction,
+                caption = stringResource(R.string.quota_progress_used, percentText(usedFraction))
+            )
         }
     }
 
@@ -403,7 +458,7 @@ private fun SubscriptionContent(q: QuotaInfo) {
     if (nextReset != null) {
         Spacer(modifier = Modifier.height(8.dp))
         Text(
-            stringResource(R.string.quota_reset_at, formatDateTime(nextReset)),
+            stringResource(R.string.quota_reset_at, DateFormats.dateTime(nextReset)),
             style = MaterialTheme.typography.labelSmall,
             color = onBrandSecondary
         )
@@ -411,7 +466,7 @@ private fun SubscriptionContent(q: QuotaInfo) {
     if (nextExpiry != null) {
         Spacer(modifier = Modifier.height(2.dp))
         Text(
-            stringResource(R.string.quota_expires_at, formatDateTime(nextExpiry)),
+            stringResource(R.string.quota_expires_at, DateFormats.dateTime(nextExpiry)),
             style = MaterialTheme.typography.labelSmall,
             color = onBrandSecondary
         )
@@ -436,7 +491,7 @@ private fun SubscriptionContent(q: QuotaInfo) {
                 color = onBrandSecondary
             )
             Text(
-                "${q.totalBalance} ${q.currency}",
+                balanceText(q) + " " + q.currency,
                 style = MaterialTheme.typography.bodySmall,
                 color = onBrand,
                 fontWeight = FontWeight.SemiBold
@@ -452,9 +507,20 @@ private fun ModelUsageSection(q: QuotaInfo) {
     val onBrand = LocalOnBrand.current
     val onBrandSecondary = LocalOnBrandSecondary.current
     var expanded by remember { mutableStateOf(false) }
+    val expandedLabel = stringResource(
+        if (expanded) R.string.quota_details_expanded else R.string.quota_details_collapsed
+    )
 
     Row(
-        modifier = Modifier.fillMaxWidth().clickable { expanded = !expanded },
+        modifier = Modifier
+            .fillMaxWidth()
+            // 48dp 最小触控高度（原实现约 24dp，低于 Material 规范）
+            .defaultMinSize(minHeight = 48.dp)
+            .clickable { expanded = !expanded }
+            .semantics {
+                role = Role.Button
+                stateDescription = expandedLabel
+            },
         verticalAlignment = Alignment.CenterVertically
     ) {
         Text(
@@ -482,7 +548,7 @@ private fun ModelUsageSection(q: QuotaInfo) {
             imageVector = Icons.Filled.KeyboardArrowDown,
             contentDescription = null,
             tint = onBrand,
-            modifier = Modifier.size(18.dp).rotate(chevronRotation)
+            modifier = Modifier.size(20.dp).rotate(chevronRotation)
         )
     }
     AnimatedVisibility(
@@ -495,7 +561,8 @@ private fun ModelUsageSection(q: QuotaInfo) {
             Spacer(modifier = Modifier.height(8.dp))
             if (q.hasModelUsage) {
                 val maxTokens = q.modelUsages.maxOf { it.totalTokens }.coerceAtLeast(1)
-                q.modelUsages.forEach { mu -> ModelUsageRow(mu, maxTokens) }
+                val multiModel = q.modelUsages.size > 1
+                q.modelUsages.forEach { mu -> ModelUsageRow(mu, maxTokens, multiModel) }
             } else {
                 ModelUsageEmptyHint(q.platform)
             }
@@ -503,36 +570,39 @@ private fun ModelUsageSection(q: QuotaInfo) {
     }
 }
 
-/** 每模型一行：模型名 + 细进度条（按 tokens 占本卡最大模型比例）+ 数值标签 */
+/**
+ * 每模型一行：模型名 + 细进度条 + 数值标签。
+ * 进度条含义为"该模型占本卡最大模型的占比"，与余额/已用占比不同，
+ * 多模型时补一行说明，避免与卡片上方的余额进度条混淆。
+ */
 @Composable
-private fun ModelUsageRow(mu: ModelUsage, maxTokens: Long) {
+private fun ModelUsageRow(mu: ModelUsage, maxTokens: Long, showShareCaption: Boolean) {
     val onBrand = LocalOnBrand.current
     val onBrandSecondary = LocalOnBrandSecondary.current
     val brandOverlay = LocalBrandOverlay.current
+    val share = (mu.totalTokens.toFloat() / maxTokens).coerceIn(0f, 1f)
+
     Column(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                mu.modelName,
-                style = MaterialTheme.typography.bodySmall,
-                color = onBrand,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f)
-            )
-            Spacer(modifier = Modifier.width(8.dp))
-            Text(
-                stringResource(R.string.quota_model_row_label, FormatUtils.formatNumber(mu.totalTokens), mu.requestCount),
-                style = MaterialTheme.typography.labelSmall,
-                color = onBrandSecondary
-            )
-        }
+        // 模型名与数值分行：大字号/长模型名下同行会互相挤压
+        Text(
+            mu.modelName,
+            style = MaterialTheme.typography.bodySmall,
+            color = onBrand,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+        Spacer(modifier = Modifier.height(2.dp))
+        Text(
+            stringResource(R.string.quota_model_row_label, FormatUtils.formatNumber(mu.totalTokens), mu.requestCount) +
+                if (showShareCaption) {
+                    " · " + stringResource(R.string.quota_progress_share, percentText(share))
+                } else "",
+            style = MaterialTheme.typography.labelSmall,
+            color = onBrandSecondary
+        )
         Spacer(modifier = Modifier.height(4.dp))
         LinearProgressIndicator(
-            progress = { (mu.totalTokens.toFloat() / maxTokens).coerceIn(0f, 1f) },
+            progress = { share },
             modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)),
             color = onBrand,
             trackColor = brandOverlay
@@ -540,17 +610,30 @@ private fun ModelUsageRow(mu: ModelUsage, maxTokens: Long) {
     }
 }
 
-/** 品牌渐变卡上的白色半透进度条（轨道为白 12% 遮罩） */
+/**
+ * 品牌渐变卡上的半透明白进度条。
+ * [caption] 为必要的语义前缀（剩余/已用 x%）：同一视觉承载不同含义时，
+ * 必须由文字消歧，否则用户只能靠猜。
+ */
 @Composable
-private fun BrandProgressBar(progress: Float) {
+private fun BrandProgressBar(progress: Float, caption: String) {
     val onBrand = LocalOnBrand.current
+    val onBrandSecondary = LocalOnBrandSecondary.current
     val brandOverlay = LocalBrandOverlay.current
-    LinearProgressIndicator(
-        progress = { progress },
-        modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)),
-        color = onBrand,
-        trackColor = brandOverlay
-    )
+    Column(modifier = Modifier.fillMaxWidth()) {
+        LinearProgressIndicator(
+            progress = { progress },
+            modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)),
+            color = onBrand,
+            trackColor = brandOverlay
+        )
+        Spacer(modifier = Modifier.height(3.dp))
+        Text(
+            text = caption,
+            style = MaterialTheme.typography.labelSmall,
+            color = onBrandSecondary
+        )
+    }
 }
 
 @Composable
@@ -582,12 +665,6 @@ private fun formatQuotaNumber(value: Double?): String {
     else String.format(Locale.US, "%.2f", value)
 }
 
-private fun formatTime(t: Long): String =
-    SimpleDateFormat("MM-dd HH:mm", Locale.getDefault()).format(Date(t))
-
-private fun formatDateTime(t: Long): String =
-    SimpleDateFormat("MM-dd HH:mm", Locale.getDefault()).format(Date(t))
-
 // ===== Preview =====
 
 private val previewQuotaNormal = QuotaInfo(
@@ -601,6 +678,15 @@ private val previewQuotaNormal = QuotaInfo(
         ModelUsage("deepseek-chat", requestCount = 128, totalTokens = 1_250_000),
         ModelUsage("deepseek-reasoner", requestCount = 12, totalTokens = 320_000)
     )
+)
+
+private val previewQuotaEstimatedUsage = QuotaInfo(
+    platform = PlatformType.KIMI,
+    isAvailable = true,
+    isConfigured = true,
+    totalBalance = "18.20",
+    monthlyUsage = "5.60",
+    monthlyUsageSource = MonthlyUsageSource.LOCAL_ESTIMATE
 )
 
 private val previewQuotaSubscription = QuotaInfo(
@@ -659,6 +745,7 @@ private fun QuotaCardPreviewContent() {
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         PlatformQuotaCard(previewQuotaNormal)
+        PlatformQuotaCard(previewQuotaEstimatedUsage)
         PlatformQuotaCard(previewQuotaSubscription)
         PlatformQuotaCard(previewQuotaMimo)
         PlatformQuotaCard(previewQuotaEstimate)

@@ -30,14 +30,24 @@
     <string name="dashboard_pending_platforms">还有 %1$d 个平台可接入 · 点击去配置</string>
     <string name="hero_total_balance">总余额</string>
     <string name="hero_subscription_excluded">订阅配额平台不计入金额汇总</string>
+    <string name="hero_estimate_included">含 %1$d 个估算平台</string>
     <string name="hero_platform_stats">已接入 %1$d/%2$d 个平台 · %3$s</string>
     <string name="hero_status_all_normal">全部正常</string>
     <string name="hero_status_abnormal">%1$d 异常</string>
-    <string name="hero_last_refresh">上次刷新 %1$s</string>
+    <string name="hero_data_time">数据时间 %1$s</string>
+    <string name="hero_stale_count">%1$d 个平台显示的是缓存数据</string>
+    <string name="hero_trend_title">余额趋势</string>
+    <string name="hero_trend_delta">区间 %1$s%2$s CNY</string>
+    <string name="hero_trend_expand">展开</string>
+    <string name="hero_trend_collapse">收起</string>
+    <string name="hero_trend_latest">最新 %1$s CNY</string>
+    <string name="hero_trend_point_selected">%1$s · %2$s CNY</string>
+    <string name="hero_trend_hint">柱高按区间相对值绘制，点击柱子查看该时间点余额</string>
+    <string name="hero_trend_a11y">余额趋势柱状图，共 %1$d 个采样点，最低 %2$s，最高 %3$s CNY</string>
 
     <!-- Token 用量统计 -->
     <string name="daily_usage_title">Token 用量统计</string>
-    <string name="daily_usage_empty">暂无 Token 用量数据（配置 DeepSeek 网页会话后可查看）</string>
+    <string name="daily_usage_empty_filtered">当前筛选条件下没有数据，试试切换来源/模型或时间范围</string>
     <string name="daily_usage_latest">最近一日消耗</string>
     <string name="daily_usage_requests">请求数</string>
     <string name="daily_usage_cost">成本</string>
@@ -52,9 +62,18 @@
     <string name="daily_usage_metric_cost">成本</string>
     <string name="daily_usage_model">模型</string>
     <string name="daily_usage_source">来源</string>
+    <string name="daily_usage_metric">指标</string>
+    <string name="daily_usage_range">范围</string>
+    <string name="daily_usage_filters_show">筛选</string>
+    <string name="daily_usage_filters_hide">收起筛选</string>
+    <string name="daily_usage_filters_default">全部来源 · 全部模型 · 总Tokens · 全部时间</string>
     <string name="daily_usage_tap_hint">点击柱子查看当日明细</string>
     <string name="daily_usage_chart_a11y">柱状图，共 %1$d 天，最近一天 %2$s，峰值 %3$s</string>
     <string name="daily_usage_day_detail">当日明细</string>
+    <string name="daily_usage_day_detail_tokens">总 %1$s · 入 %2$s · 出 %3$s</string>
+    <string name="daily_usage_day_detail_requests">%1$s 次 · ¥%2$s</string>
+    <string name="daily_usage_a11y_list_title">逐日数值</string>
+    <string name="daily_usage_a11y_show_all">显示全部 %1$d 天</string>
 
     <!-- 额度卡片 -->
     <string name="status_normal">正常</string>
@@ -69,8 +88,15 @@
     <string name="quota_label_total_balance">总余额</string>
     <string name="quota_label_remaining_token">剩余Token</string>
     <string name="quota_label_monthly_usage">本月用量</string>
+    <string name="quota_label_monthly_usage_estimated">本月用量（估算）</string>
     <string name="quota_label_available_balance">可用余额</string>
     <string name="quota_label_total_used">累计已用</string>
+    <string name="quota_value_unknown">—</string>
+    <string name="quota_progress_remaining">剩余 %1$s%%</string>
+    <string name="quota_progress_used">已用 %1$s%%</string>
+    <string name="quota_progress_share">占本卡最大 %1$s%%</string>
+    <string name="quota_details_expanded">已展开</string>
+    <string name="quota_details_collapsed">已收起</string>
     <string name="quota_remaining_of_total">剩余: %1$s / 总量: %2$s %3$s</string>
     <string name="quota_ark_need_initial">填写初始余额后显示估算余额</string>
     <string name="quota_plan_label">套餐</string>
@@ -98,6 +124,10 @@
     <string name="settings_group_general">通用设置</string>
     <string name="settings_api_key_masked">API Key: %1$s...%2$s</string>
     <string name="settings_api_key_empty">未配置 API Key</string>
+    <string name="settings_edit_platform">修改 %1$s 配置</string>
+    <string name="settings_enable_switch">启用监控</string>
+    <string name="settings_switch_disabled_hint">填入 API Key 或完成网页登录后可启用</string>
+    <string name="settings_notification_denied">通知权限未授予，余额预警不会发出提醒。点击前往系统设置开启</string>
     <string name="settings_create_key_hint">在 %1$s 创建 API Key</string>
     <string name="settings_console_deepseek">platform.deepseek.com</string>
     <string name="settings_console_kimi">platform.moonshot.cn</string>

@@ -38,12 +38,18 @@ class WebSessionStore(context: Context) : WebSessionAccess {
 
     suspend fun saveWebSession(platform: PlatformType, token: String, cookie: String? = null) {
         withContext(Dispatchers.IO) {
+            val storedToken = SecureCipher.encrypt(token)
+            val storedCookie = cookie?.let { SecureCipher.encrypt(it) }
             prefs.edit {
-                putString(tokenKey(platform), SecureCipher.encrypt(token))
-                if (cookie != null) putString(cookieKey(platform), SecureCipher.encrypt(cookie))
+                putString(tokenKey(platform), storedToken)
+                storedCookie?.let { putString(cookieKey(platform), it) }
             }
-            if (SecureCipher.lastDegraded) {
-                settingsPrefs.edit { putBoolean("encryption_degraded", true) }
+            // 降级判定基于本次返回值与明文的比较（见 SecureCipher.isDegraded），
+            // 不用全局标志，避免多平台并行保存时的竞态把告警清掉
+            if (SecureCipher.isDegraded(storedToken, token) ||
+                (cookie != null && storedCookie != null && SecureCipher.isDegraded(storedCookie, cookie))
+            ) {
+                settingsPrefs.edit { putBoolean(SettingsStore.KEY_ENCRYPTION_DEGRADED, true) }
             }
         }
     }
@@ -58,7 +64,7 @@ class WebSessionStore(context: Context) : WebSessionAccess {
     }
 
     /** 读取网页会话令牌；未配置或解密失败返回 null。 */
-    suspend fun getWebSession(platform: PlatformType): String? {
+    override suspend fun getWebSession(platform: PlatformType): String? {
         return withContext(Dispatchers.IO) {
             val stored = prefs.getString(tokenKey(platform), "") ?: ""
             stored.ifBlank { null }?.let { SecureCipher.decrypt(it) }?.ifBlank { null }
@@ -66,7 +72,7 @@ class WebSessionStore(context: Context) : WebSessionAccess {
     }
 
     /** 读取随会话保存的浏览器 Cookie 串（WAF 指纹用）；未保存返回 null。 */
-    suspend fun getWebSessionCookie(platform: PlatformType): String? {
+    override suspend fun getWebSessionCookie(platform: PlatformType): String? {
         return withContext(Dispatchers.IO) {
             val stored = prefs.getString(cookieKey(platform), "") ?: ""
             stored.ifBlank { null }?.let { SecureCipher.decrypt(it) }?.ifBlank { null }
@@ -91,7 +97,11 @@ class WebSessionStore(context: Context) : WebSessionAccess {
                 .put("month", month ?: "")
                 .put("total", total ?: "")
                 .toString()
-            prefs.edit { putString(snapshotKey(PlatformType.KIMI), SecureCipher.encrypt(json)) }
+            val stored = SecureCipher.encrypt(json)
+            prefs.edit { putString(snapshotKey(PlatformType.KIMI), stored) }
+            if (SecureCipher.isDegraded(stored, json)) {
+                settingsPrefs.edit { putBoolean(SettingsStore.KEY_ENCRYPTION_DEGRADED, true) }
+            }
         }
     }
 

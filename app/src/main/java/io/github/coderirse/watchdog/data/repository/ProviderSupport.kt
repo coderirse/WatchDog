@@ -13,6 +13,14 @@ internal object ProviderSupport {
         else -> QuotaInfo.error(platform, "HTTP $code")
     }
 
+    /** HTTP 200 但响应体缺失/为空——各 Provider 统一文案，避免四处重复字面量。 */
+    fun emptyResponse(platform: PlatformType): QuotaInfo =
+        QuotaInfo.error(platform, "接口返回为空，请稍后重试")
+
+    /** HTTP 200 但结构无法识别（字段全缺失）——通常意味着平台接口已变更。 */
+    fun unrecognizedResponse(platform: PlatformType): QuotaInfo =
+        QuotaInfo.error(platform, "响应格式无法识别，接口可能已变更")
+
     /** 金额格式化为两位小数（7.56019→7.56；null/无法解析→0.00）。 */
     fun fmtAmount(v: String?): String {
         val d = v?.toDoubleOrNull() ?: return "0.00"

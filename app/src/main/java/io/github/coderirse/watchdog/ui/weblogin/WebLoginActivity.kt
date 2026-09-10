@@ -17,7 +17,9 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
+import io.github.coderirse.watchdog.BuildConfig
 import io.github.coderirse.watchdog.MainActivity
 import io.github.coderirse.watchdog.R
 import io.github.coderirse.watchdog.WatchDogApplication
@@ -139,16 +141,25 @@ class WebLoginActivity : ComponentActivity() {
      * WebView 内部渲染。
      */
     private fun buildLayout(): LinearLayout {
-        val dp = resources.displayMetrics.density
-        // 深色模式适配：标题区/按钮行随系统主题，WebView 内容仍走白底（平台登录页为浅色）
-        val night = resources.configuration.uiMode and
-            android.content.res.Configuration.UI_MODE_NIGHT_MASK ==
-            android.content.res.Configuration.UI_MODE_NIGHT_YES
-        val chromeBg = if (night) Color.rgb(0x0F, 0x17, 0x2A) else Color.WHITE
-        val titleColor = if (night) Color.rgb(0xF1, 0xF5, 0xF9) else Color.BLACK
-        val subColor = if (night) Color.rgb(0x94, 0xA3, 0xB8) else Color.GRAY
-        val cancelColor = if (night) Color.rgb(0x33, 0x41, 0x55) else Color.rgb(0xEE, 0xEE, 0xF2)
-        val cancelTextColor = if (night) Color.rgb(0xE2, 0xE8, 0xF0) else Color.BLACK
+        // 深色模式适配：标题区/按钮行随系统主题，WebView 内容仍走白底（平台登录页为浅色）。
+        // 颜色一律取自资源（令牌与 Compose 主题同源）：深色值由 values-night/colors.xml
+        // 自动接管，代码不再判断 uiMode、不再硬编码色值。
+        val chromeBg = ContextCompat.getColor(this, R.color.wd_login_chrome_bg)
+        val titleColor = ContextCompat.getColor(this, R.color.wd_login_title_text)
+        val subColor = ContextCompat.getColor(this, R.color.wd_login_sub_text)
+        val cancelColor = ContextCompat.getColor(this, R.color.wd_login_outlined_bg)
+        val cancelTextColor = ContextCompat.getColor(this, R.color.wd_login_outlined_text)
+        val primaryColor = ContextCompat.getColor(this, R.color.wd_login_primary)
+
+        // 尺寸一律取自 @dimen/wd_login_*（按当前屏幕密度换算为像素）
+        val contentPadding = resources.getDimensionPixelSize(R.dimen.wd_login_content_padding)
+        val infoPaddingTop = resources.getDimensionPixelSize(R.dimen.wd_login_info_padding_top)
+        val infoPaddingBottom = resources.getDimensionPixelSize(R.dimen.wd_login_info_padding_bottom)
+        val buttonsPaddingTop = resources.getDimensionPixelSize(R.dimen.wd_login_buttons_padding_top)
+        val buttonsPaddingBottom = resources.getDimensionPixelSize(R.dimen.wd_login_buttons_padding_bottom)
+        val buttonHeight = resources.getDimensionPixelSize(R.dimen.wd_login_button_height)
+        // GradientDrawable.cornerRadius 需要 Float，故这里用 getDimension 而非 getDimensionPixelSize
+        val buttonCorner = resources.getDimension(R.dimen.wd_login_button_corner)
 
         // 全屏适配：根布局不设左右 padding，WebView 铺满（修复"白边不适配"）
         val root = LinearLayout(this).apply {
@@ -159,7 +170,7 @@ class WebLoginActivity : ComponentActivity() {
         // 标题区左右留边距（仅文字区，不作用于 WebView）
         val info = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding((16 * dp).toInt(), (12 * dp).toInt(), (16 * dp).toInt(), (6 * dp).toInt())
+            setPadding(contentPadding, infoPaddingTop, contentPadding, infoPaddingBottom)
             setBackgroundColor(chromeBg)
         }
         val title = TextView(this).apply {
@@ -195,25 +206,26 @@ class WebLoginActivity : ComponentActivity() {
 
         // 底部按钮：Material 观感（圆角 + 主色填充 / 次要色描边），非复古系统按钮
         val cancelBg = android.graphics.drawable.GradientDrawable().apply {
-            cornerRadius = (24 * dp).toInt().toFloat()
+            cornerRadius = buttonCorner
             setColor(cancelColor)
         }
         val captureBg = android.graphics.drawable.GradientDrawable().apply {
-            cornerRadius = (24 * dp).toInt().toFloat()
-            setColor(Color.rgb(0x6C, 0x4D, 0xFF))
+            cornerRadius = buttonCorner
+            setColor(primaryColor)
         }
         val buttons = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            setPadding((16 * dp).toInt(), (8 * dp).toInt(), (16 * dp).toInt(), (12 * dp).toInt())
+            setPadding(contentPadding, buttonsPaddingTop, contentPadding, buttonsPaddingBottom)
             setBackgroundColor(chromeBg)
         }
-        val gap = (8 * dp).toInt()
+        // 按钮间距
+        val gap = resources.getDimensionPixelSize(R.dimen.wd_login_button_gap)
         val cancel = Button(this).apply {
             text = getString(R.string.action_cancel)
             background = cancelBg
             setTextColor(cancelTextColor)
             textSize = 15f
-            layoutParams = LinearLayout.LayoutParams(0, (48 * dp).toInt(), 1f)
+            layoutParams = LinearLayout.LayoutParams(0, buttonHeight, 1f)
             setOnClickListener { finish() }
         }
         val capture = Button(this).apply {
@@ -221,12 +233,12 @@ class WebLoginActivity : ComponentActivity() {
             background = captureBg
             setTextColor(Color.WHITE)
             textSize = 15f
-            layoutParams = LinearLayout.LayoutParams(0, (48 * dp).toInt(), 1f)
+            layoutParams = LinearLayout.LayoutParams(0, buttonHeight, 1f)
             setOnClickListener { onCaptureButtonClick() }
         }
         captureButton = capture
         // 复用布局参数：给 gap 用 margin
-        val cancelLp = LinearLayout.LayoutParams(0, (48 * dp).toInt(), 1f)
+        val cancelLp = LinearLayout.LayoutParams(0, buttonHeight, 1f)
         cancelLp.marginEnd = gap
         cancel.layoutParams = cancelLp
         buttons.addView(cancel)
@@ -291,7 +303,9 @@ class WebLoginActivity : ComponentActivity() {
                 super.onPageFinished(view, url)
                 flog("finish $url")
                 // Kimi：探测页面实际发起的 API 请求（找出控制台用量接口路径）
-                if (loginPlatform == PlatformType.KIMI) {
+                // 仅 debug 构建执行：这是纯诊断脚本，release 下既无日志出口也无收益，
+                // 不应在用户登录页里注入并运行多余 JS
+                if (BuildConfig.DEBUG && loginPlatform == PlatformType.KIMI) {
                     view.evaluateJavascript(
                         "(function(){try{var es=performance.getEntriesByType('resource');" +
                             "return JSON.stringify(es.map(function(e){return e.name.substring(0,120)})" +
