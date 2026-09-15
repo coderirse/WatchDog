@@ -151,8 +151,10 @@ fun SettingsScreen(
             onSave = { p, key -> viewModel.saveApiKey(p, key) },
             onSaveWebSession = { p, token -> viewModel.saveWebSession(p, token) },
             onOpenWebLogin = { p ->
-                context.startActivity(WebLoginActivity.intent(context, p))
+                // uiIntent：debug 构建为诊断模式（会话有效时不会自动抓取返回，可停留观察）
+                context.startActivity(WebLoginActivity.uiIntent(context, p))
             },
+            onClearWebSession = { p -> viewModel.clearWebSession(p) },
             onDelete = { p -> viewModel.deleteApiKey(p) }
         )
     }

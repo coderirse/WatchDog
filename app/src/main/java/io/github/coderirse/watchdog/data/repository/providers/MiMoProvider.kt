@@ -1,5 +1,6 @@
 package io.github.coderirse.watchdog.data.repository.providers
 
+import io.github.coderirse.watchdog.BuildConfig
 import io.github.coderirse.watchdog.data.api.MiMoConsoleApi
 import io.github.coderirse.watchdog.data.api.MiMoConsoleParser
 import io.github.coderirse.watchdog.data.local.SettingsStore
@@ -7,6 +8,7 @@ import io.github.coderirse.watchdog.data.model.PlatformType
 import io.github.coderirse.watchdog.data.model.QuotaInfo
 import io.github.coderirse.watchdog.data.repository.PlatformQuotaProvider
 import io.github.coderirse.watchdog.data.repository.WebSessionAccess
+import io.github.coderirse.watchdog.util.DebugLog
 import io.github.coderirse.watchdog.util.FormatUtils
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -32,12 +34,40 @@ class MiMoProvider(
             // 无会话：引导进入内嵌登录页（WebView 登录态持久化，会话仍有效时秒抓凭证免输入）
             ?: return QuotaInfo.error(platform, "尚未建立网页会话，点击下方按钮打开登录页获取")
                 .copy(needsRelogin = true)
+        // 整串浏览器 Cookie（登录时由 CookieManager 抓取并加密保存），
+        // 与 api-platform_ph 一同发送——只带后者会被网关判为未登录（真机实测 401）
+        val cookie = webSessionAccess.getWebSessionCookie(platform)
 
         // 1) Token Plan 订阅数据（detail / usage 并行拉取，互不阻塞）
         val (detailResponse, usageResponse) = coroutineScope {
-            val d = async { runCatching { mimoConsoleApi.getTokenPlanDetail(session) }.getOrNull() }
-            val u = async { runCatching { mimoConsoleApi.getTokenPlanUsage(session) }.getOrNull() }
+            val d = async {
+                runCatching { mimoConsoleApi.getTokenPlanDetail(session, cookie) }.getOrNull()
+            }
+            val u = async {
+                runCatching { mimoConsoleApi.getTokenPlanUsage(session, cookie) }.getOrNull()
+            }
             d.await() to u.await()
+        }
+
+        // 诊断：会话是否被服务端接受（只记长度，不记令牌内容）。
+        // MiMo 无官方接口文档，401 的成因（Cookie 不完整/令牌形态/风控绑定/接口变更）
+        // 只能靠这些日志区分；写入 DebugLog（落盘）以便设备掉线后仍能事后拉取
+        if (BuildConfig.DEBUG) {
+            DebugLog.i(
+                TAG,
+                "MiMo fetch: sessionLen=${session.length} cookieLen=${cookie?.length ?: 0} " +
+                    "detail=${detailResponse?.code() ?: -1} usage=${usageResponse?.code() ?: -1}"
+            )
+            // 401 时把响应体片段写出来：网关的错误文案（如 invalid token / session expired）
+            // 是判断"凭证不完整"还是"会话真的过期"的唯一依据
+            listOf("detail" to detailResponse, "usage" to usageResponse).forEach { (name, resp) ->
+                if (resp != null && resp.code() == 401) {
+                    val body = runCatching { resp.errorBody()?.string() }.getOrNull()
+                    DebugLog.i(TAG, "MiMo 401 [$name] body=${body?.take(300) ?: "<empty>"}")
+                    val headers = resp.headers().names().joinToString(",")
+                    DebugLog.i(TAG, "MiMo 401 [$name] respHeaders=$headers")
+                }
+            }
         }
 
         val unauthorized = (detailResponse?.code() == 401) || (usageResponse?.code() == 401)
@@ -53,7 +83,7 @@ class MiMoProvider(
 
         // 2) 余额探测：优先用上次命中的路径，失效时候选路径逐个探测（带会话），
         //    第一个 200 且可解析出余额者胜。任何一步失败都不影响令牌套餐数据展示。
-        val balance = if (!unauthorized) probeBalance(session) else null
+        val balance = if (!unauthorized) probeBalance(session, cookie) else null
 
         // 3) 组合结果：订阅数据存在（套餐/窗口）或余额命中即视为有效数据
         val hasSubscription = planDetail != null || windows.isNotEmpty()
@@ -80,6 +110,17 @@ class MiMoProvider(
             dataSourceLabel = "网页控制台"
         )
 
+        if (BuildConfig.DEBUG) {
+            // 余额是"探测候选路径"得来，必须能看出到底命中没有、命中的是哪条路径
+            // （网页实际调用的是 /api/v1/balance，故该路径应命中）
+            DebugLog.i(
+                TAG,
+                "MiMo balance probe: hit=${balance != null} " +
+                    "value=${balance?.balance} currency=${balance?.currency} " +
+                    "savedPath=${runCatching { settingsStore.getProbePath(platform) }.getOrNull()}"
+            )
+        }
+
         if (balance != null) {
             // CNY 余额走本地月度追踪（与 DeepSeek/Kimi 相同机制），并参与总余额/趋势
             val currency = balance.currency ?: "CNY"
@@ -103,27 +144,34 @@ class MiMoProvider(
      * 带会话探测余额类候选路径；首个命中即返回并持久化该路径，
      * 下次刷新优先直用（避免每轮全量探测 8 个候选路径触发网关风控）。
      */
-    private suspend fun probeBalance(session: String): MiMoConsoleParser.BalanceInfo? {
+    private suspend fun probeBalance(
+        session: String,
+        cookie: String?
+    ): MiMoConsoleParser.BalanceInfo? {
         // 1) 上次命中的路径优先
         val saved = runCatching { settingsStore.getProbePath(platform) }.getOrNull()
         if (saved != null) {
-            val hit = probePath(session, saved)
+            val hit = probePath(session, cookie, saved)
             if (hit != null) return hit
             // 缓存路径失效（接口变更）→ 回退全量探测，探测成功后覆盖
         }
         // 2) 全量候选探测
         for (path in MiMoConsoleParser.BALANCE_CANDIDATES) {
             if (path == saved) continue
-            val info = probePath(session, path) ?: continue
+            val info = probePath(session, cookie, path) ?: continue
             runCatching { settingsStore.saveProbePath(platform, path) }
             return info
         }
         return null
     }
 
-    private suspend fun probePath(session: String, path: String): MiMoConsoleParser.BalanceInfo? {
+    private suspend fun probePath(
+        session: String,
+        cookie: String?,
+        path: String
+    ): MiMoConsoleParser.BalanceInfo? {
         val body = runCatching {
-            val resp = mimoConsoleApi.getRaw(session, path)
+            val resp = mimoConsoleApi.getRaw(session, cookie, path)
             if (resp.isSuccessful) resp.body()?.string() else null
         }.getOrNull() ?: return null
         return MiMoConsoleParser.parseBalanceInfo(body)
@@ -134,5 +182,9 @@ class MiMoProvider(
         val cycle = d.cycleLabel ?: return null
         val credits = d.totalCredits?.let { FormatUtils.formatNumber(it.toLong()) }
         return if (credits != null) "$cycle · Credits 额度 $credits" else cycle
+    }
+
+    private companion object {
+        const val TAG = "WatchDogMiMo"
     }
 }

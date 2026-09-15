@@ -1,4 +1,4 @@
-package io.github.coderirse.watchdog.ui.weblogin
+﻿package io.github.coderirse.watchdog.ui.weblogin
 
 import android.annotation.SuppressLint
 import android.content.Context
@@ -24,6 +24,8 @@ import io.github.coderirse.watchdog.MainActivity
 import io.github.coderirse.watchdog.R
 import io.github.coderirse.watchdog.WatchDogApplication
 import io.github.coderirse.watchdog.data.model.PlatformType
+import io.github.coderirse.watchdog.data.repository.MiMoSessionVerifier
+import io.github.coderirse.watchdog.util.DebugLog
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -63,30 +65,23 @@ class WebLoginActivity : ComponentActivity() {
     /** 已被平台 API 拒绝的 MiMo Cookie 值（避免轮询反复用失效凭证打接口）。 */
     private var mimoRejectedToken: String? = null
 
+    /** MiMo App 侧校验进行中标志：避免 1.5s 轮询叠加并发请求。 */
+    private var mimoVerifying = false
+
     /** Kimi 方案 A：捕获到凭证后暂存内存，停留页面，待用户确认(完成并返回)再存储+跳转。 */
     private var kimiToken: String? = null
     private var kimiCookie: String? = null
     private var captureButton: Button? = null
 
-    /** 调试日志（仅 debug 构建）：直写文件（logcat 在部分 ROM 上会卡死/丢日志）。 */
+    /**
+     * 调试日志（仅 debug 构建）：统一走 [DebugLog]——同时写 logcat 与
+     * `cacheDir/watchdog_debug.log`。落盘的意义是真机诊断时设备可能掉线、
+     * logcat 缓冲区会被冲掉，而这类"抓不到数据"的问题必须在现场取到痕迹。
+     */
     private fun flog(msg: String) {
-        if (!io.github.coderirse.watchdog.BuildConfig.DEBUG) return
-        android.util.Log.i("WatchDogLogin", msg)
-        runCatching {
-            val f = java.io.File(cacheDir, "weblogin_debug.log")
-            // 每次进入登录页先清掉上次会话的残留日志，避免历史凭证线索长期驻留
-            if (!debugLogTruncated) {
-                f.delete()
-                debugLogTruncated = true
-            }
-            f.appendText(
-                java.text.SimpleDateFormat("HH:mm:ss.SSS", java.util.Locale.US)
-                    .format(java.util.Date()) + " " + msg + "\n"
-            )
-        }
+        if (!BuildConfig.DEBUG) return
+        DebugLog.i("WatchDogLogin", msg)
     }
-
-    private var debugLogTruncated = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -558,8 +553,23 @@ class WebLoginActivity : ComponentActivity() {
         }.onFailure { if (manual) toastNoSession() }
     }
 
-    // ===== MiMo：CookieManager 取 api-platform_ph（HttpOnly 可见）→ 页面内 fetch 验证 =====
+    // ===== MiMo：CookieManager 取 api-platform_ph → **App 侧**请求验证 → 保存 =====
 
+    /**
+     * MiMo 凭证抓取。
+     *
+     * 修复的关键点（原实现会"登录成功却抓不到"）：
+     * 1. **不再用 `WebView.url` 决定是否校验**。原代码在"url 不含平台域"时直接
+     *    `finishWithSession`（注释写着"出现即视为有效"），而 OAuth 回跳瞬间
+     *    `WebView.url` 往往还是账号域（甚至为空），于是把未经验证的凭证当成有效保存 ——
+     *    随后 Provider 侧请求被网关 401，用户看到的就是"登录成功了但抓不到数据"。
+     *    现在改为：不在平台域就**继续轮询等待**，不保存。
+     * 2. **校验改到 App 侧**（[MiMoSessionVerifier]）：用与抓取数据完全相同的
+     *    OkHttp 请求 + 同一份 Cookie 判断有效性。页面内 fetch 自动带该源全部 Cookie
+     *    与浏览器指纹，通过并不代表 App 侧能通过，原方案是在用另一种传输方式做判断。
+     * 3. 校验结果区分「明确被拒」（401/403）与「无法判定」（网络异常），后者继续轮询重试，
+     *    不再把瞬时网络问题当成"凭证无效"。
+     */
     private fun captureMimo(manual: Boolean) {
         val wv = webViewReady
         val cookies = runCatching {
@@ -573,32 +583,56 @@ class WebLoginActivity : ComponentActivity() {
             }
             return
         }
-        // 页面不在平台域（仍在小米账号 OAuth 页）时无法发起同源验证：
-        // api-platform_ph 仅在登录回跳后由平台设置，出现即视为有效，直接采用
-        val onPlatformHost = wv?.url.orEmpty().contains("platform.xiaomimimo.com")
-        if (wv == null || !onPlatformHost) {
-            finishWithSession(token, cookies)
+        // 未回到平台域（仍在小米账号 OAuth 页）时不保存，等待回跳后 Cookie 集齐再校验。
+        // 注意这里刻意"失败即等待"而不是"当作有效"：宁可不保存，也不能保存坏凭证。
+        if (wv == null) {
+            if (manual) toastNoSession()
             return
         }
-        runCatching {
-            wv.evaluateJavascript(mimoVerifyScript(token)) { raw ->
-                val obj = parseJsObject(raw)
-                when {
-                    obj?.optBoolean("valid") == true -> finishWithSession(token, cookies)
-                    obj != null && obj.has("valid") && !obj.optBoolean("valid") -> {
+        val onPlatformHost = wv.url.orEmpty().contains("platform.xiaomimimo.com")
+        if (!onPlatformHost) {
+            if (manual) {
+                toastNoSession()
+                runDiagnostics(wv)
+            }
+            return
+        }
+        verifyMimoSessionThenSave(token, cookies, manual, wv)
+    }
+
+    /** App 侧校验 MiMo 会话，结果决定保存 / 继续等待 / 明确报错。 */
+    private fun verifyMimoSessionThenSave(
+        token: String,
+        cookies: String?,
+        manual: Boolean,
+        wv: WebView
+    ) {
+        if (mimoVerifying) return
+        mimoVerifying = true
+        val verifier = (application as WatchDogApplication).appContainer.miMoSessionVerifier
+        lifecycleScope.launch {
+            val result = runCatching { verifier.verify(token, cookies) }.getOrNull()
+            withContext(Dispatchers.Main) {
+                mimoVerifying = false
+                when (result) {
+                    is MiMoSessionVerifier.Result.Valid -> {
+                        flog("mimo app-side verify PASS (tokenLen=${token.length} cookieLen=${cookies?.length ?: 0})")
+                        finishWithSession(token, cookies)
+                    }
+                    is MiMoSessionVerifier.Result.Rejected -> {
                         mimoRejectedToken = token
+                        flog("mimo app-side verify REJECTED (401/403), tokenLen=${token.length}")
                         if (manual) toastInvalidSession()
                     }
-                    obj?.optBoolean("pending") == true -> {
-                        setStatus(getString(R.string.weblogin_status_verifying))
+                    is MiMoSessionVerifier.Result.Inconclusive -> {
+                        // 网络问题不等于凭证失效：不拉黑，下一轮轮询会重试
+                        flog("mimo verify inconclusive: ${result.message}")
+                        if (manual) setStatus("校验未完成：${result.message ?: "网络异常"}，请稍后重试")
                     }
-                    else -> if (manual) {
-                        toastNoSession()
-                        runDiagnostics(wv)
-                    }
+                    else -> flog("mimo verify abnormal result")
                 }
             }
-        }.onFailure { if (manual) toastNoSession() }
+        }
     }
 
     private fun extractPhCookie(cookies: String?): String? =
@@ -607,6 +641,25 @@ class WebLoginActivity : ComponentActivity() {
             ?.firstOrNull { it.startsWith("api-platform_ph=") }
             ?.substringAfter("api-platform_ph=")
             ?.takeIf { it.length > 5 }
+
+    /**
+     * 诊断：Cookie 的**名字**清单（绝不记录值）。
+     *
+     * MiMo 网页端可能同时依赖多个 Cookie（不止 api-platform_ph）。
+     * 若服务端对仅带 api-platform_ph 的请求返回 401，这份名字清单就是判断
+     * "是否需要补带其它 Cookie"的直接依据。同时输出 platform.xiaomimimo.com 之外的
+     * 域是否持有会话 Cookie（HttpOnly 的可能对 getCookie 不可见）。
+     */
+    private fun describeCookies(cookies: String?): String {
+        if (cookies.isNullOrBlank()) return "none"
+        val names = runCatching {
+            cookies.split(";").mapNotNull { seg ->
+                val eq = seg.trim().indexOf('=')
+                if (eq > 0) seg.trim().substring(0, eq) else null
+            }
+        }.getOrDefault(emptyList())
+        return "count=${names.size} names=[${names.joinToString(",")}]"
+    }
 
     /**
      * 解析 evaluateJavascript 回调。
@@ -645,20 +698,37 @@ class WebLoginActivity : ComponentActivity() {
     private fun finishWithSession(token: String, cookie: String?) {
         if (finished || isFinishing) return
         finished = true
-        if (io.github.coderirse.watchdog.BuildConfig.DEBUG) {
-            android.util.Log.d(
+        if (BuildConfig.DEBUG) {
+            DebugLog.d(
                 "WatchDogLogin",
-                "session captured: token=${token.length}c cookie=${cookie?.length ?: 0}c platform=$loginPlatform"
+                "session captured: token=${token.length}c cookie=${cookie?.length ?: 0}c " +
+                    "platform=$loginPlatform cookies=${describeCookies(cookie)} url=${webViewReady?.url}"
             )
+            if (loginPlatform == PlatformType.MIMO) {
+                // 关键判断：抓到的是不是 api-platform_ph，以及它的前缀形态
+                DebugLog.d(
+                    "WatchDogLogin",
+                    "mimo phToken=" +
+                        (extractPhCookie(cookie)?.let { "len=${it.length} prefix=${it.take(6)}" }
+                            ?: "NOT FOUND")
+                )
+            }
         }
         setStatus(getString(R.string.weblogin_status_captured))
         val app = application as WatchDogApplication
         lifecycleScope.launch(Dispatchers.IO) {
-            val saved = runCatching {
+            // 诊断：saveWebSession 抛异常时 runCatching 只给出 false，看不到原因，
+            // 而"登录成功但数据抓不到"往往就卡在这一步，故把异常也记下来
+            val saveResult = runCatching {
                 app.appContainer.webSessionStore.saveWebSession(loginPlatform, token, cookie)
-            }.isSuccess
+            }
+            DebugLog.d(
+                "WatchDogLogin",
+                "finishWithSession save: platform=$loginPlatform ok=${saveResult.isSuccess} " +
+                    "err=${saveResult.exceptionOrNull()?.let { it::class.java.simpleName + ": " + it.message }}"
+            )
             withContext(Dispatchers.Main) {
-                if (!saved) {
+                if (saveResult.isFailure) {
                     // 存储失败（加密/磁盘异常）：如实提示，不跳转，允许用户重试
                     finished = false
                     setStatus(getString(R.string.weblogin_status_save_failed))
@@ -674,6 +744,9 @@ class WebLoginActivity : ComponentActivity() {
                     getString(R.string.weblogin_success_toast, loginPlatform.displayName),
                     Toast.LENGTH_SHORT
                 ).show()
+                // 仪表盘用 rememberLauncherForActivityResult 拉起本页并依赖 RESULT_OK 触发刷新；
+                // 不回传结果码时，从仪表盘进来的用户会看到"会话已保存"但数据不刷新。
+                setResult(RESULT_OK)
                 // 清除登录页之上的界面（如设置页），回到主界面并导航到仪表盘
                 val main = Intent(this@WebLoginActivity, MainActivity::class.java).apply {
                     flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
@@ -802,39 +875,6 @@ class WebLoginActivity : ComponentActivity() {
         """.trimIndent()
     }
 
-    /**
-     * MiMo 凭证验证（Cookie 值由 Kotlin 侧从 CookieManager 取得后注入）：
-     * 页面内 fetch tokenPlan/detail 验证（status 200 即有效），结果经 __wdResult 两拍中转。
-     */
-    private fun mimoVerifyScript(token: String): String {
-        val t = JSONObject.quote(token)
-        return """
-        (function(){
-          try{
-            if (window.__wdResult) {
-              var r = window.__wdResult;
-              window.__wdResult = null;
-              return r;
-            }
-            if (window.__wdBusy) return {pending: true};
-            if (window.__wdWait && Date.now() < window.__wdWait) return null;
-            if (location.host !== 'platform.xiaomimimo.com') return null;
-            window.__wdBusy = true;
-            fetch('/api/v1/tokenPlan/detail', {headers: {'api-platform_ph': $t}})
-              .then(function(r){
-                window.__wdBusy = false;
-                window.__wdResult = {valid: r.status === 200};
-              })
-              .catch(function(){
-                window.__wdBusy = false;
-                window.__wdWait = Date.now() + 30000;
-              });
-            return {pending: true};
-          }catch(e){ return null; }
-        })()
-        """.trimIndent()
-    }
-
     companion object {
         const val EXTRA_PLATFORM = "platform"
 
@@ -845,6 +885,16 @@ class WebLoginActivity : ComponentActivity() {
         const val CHROME_MOBILE_UA =
             "Mozilla/5.0 (Linux; Android 15; Pixel) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
 
+        /**
+         * 界面入口（设置页 / 仪表盘重新登录按钮共用）。
+         *
+         * 注意：会话有效时进页面即自动抓取并返回——这是刻意行为（免二次输入账号）。
+         * 早期曾让 debug 构建走"停在页面手动抓取"的诊断模式，结果挡住了真实保存路径，
+         * 排查"会话没落盘"时反而看不到问题，故统一为正常模式。
+         */
+        fun uiIntent(context: Context, platform: PlatformType): Intent =
+            intent(context, platform)
+
         fun intent(context: Context, platform: PlatformType): Intent =
             Intent(context, WebLoginActivity::class.java).apply {
                 putExtra(EXTRA_PLATFORM, platform.name)
@@ -854,8 +904,7 @@ class WebLoginActivity : ComponentActivity() {
     // ===== UI =====
 
     /** 诊断脚本：输出页面域 + localStorage / sessionStorage / cookie 三处键名（不含值）。 */
-    private val JS_DIAG_KEYS = """
-        (function(){
+    private val JS_DIAG_KEYS = """        (function(){
           try{
             function keysOf(st){
               var a = [];

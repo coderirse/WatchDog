@@ -5,6 +5,7 @@ import coil.ImageLoader
 import coil.ImageLoaderFactory
 import coil.disk.DiskCache
 import io.github.coderirse.watchdog.di.AppContainer
+import io.github.coderirse.watchdog.util.DebugLog
 
 class WatchDogApplication : Application(), ImageLoaderFactory {
 
@@ -13,6 +14,8 @@ class WatchDogApplication : Application(), ImageLoaderFactory {
 
     override fun onCreate() {
         super.onCreate()
+        // 调试日志落盘（仅 debug 构建生效）：设备掉线/logcat 被冲掉时仍可事后拉取
+        DebugLog.init(cacheDir)
         appContainer = AppContainer(this)
     }
 

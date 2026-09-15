@@ -36,6 +36,7 @@ fun ApiKeyDialog(
     onSave: (platform: PlatformType, apiKey: String) -> Unit,
     onSaveWebSession: (platform: PlatformType, token: String) -> Unit,
     onOpenWebLogin: (platform: PlatformType) -> Unit = {},
+    onClearWebSession: (platform: PlatformType) -> Unit = {},
     onDelete: (platform: PlatformType) -> Unit
 ) {
     var apiKeyInput by remember { mutableStateOf(currentApiKey) }
@@ -147,6 +148,19 @@ fun ApiKeyDialog(
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.outline
                         )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        // 换账号的唯一入口：清除加密凭证 **并** 清掉登录页 WebView 的
+                        // Cookie/localStorage（否则下次打开登录页会自动带旧账号登录态）
+                        TextButton(
+                            onClick = { onClearWebSession(platform) },
+                            contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)
+                        ) {
+                            Text(
+                                text = stringResource(R.string.apikey_dialog_session_clear),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                        }
                     }
                 }
             }

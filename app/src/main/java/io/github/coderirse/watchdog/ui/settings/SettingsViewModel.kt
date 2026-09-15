@@ -110,7 +110,8 @@ class SettingsViewModel(
             settingsStore.removeApiKey(platform)
             settingsStore.setEnabled(platform, false)
             if (platform.supportsConsoleSession) {
-                webSessionStore.removeWebSession(platform)
+                // 一并清掉 WebView 登录态，避免"删了 Key 但登录页还是旧账号"的迷惑状态
+                webSessionStore.removeWebSessionFully(platform)
             }
             dismissApiKeyDialog()
             loadSettings()
@@ -121,7 +122,28 @@ class SettingsViewModel(
     fun saveWebSession(platform: PlatformType, token: String) {
         viewModelScope.launch {
             webSessionStore.saveWebSession(platform, token)
+            // 会话保存成功即自动启用：MiMo 这类"仅靠网页会话"的平台没有 API Key，
+            // 若要求用户再去手动打开开关，很容易出现"登录了但平台没启用、Provider 不被调用"
+            // 的迷惑状态（用户实机踩到过）
             settingsStore.setEnabled(platform, true)
+            loadSettings()
+        }
+    }
+
+    /**
+     * 清除网页会话（换账号）。
+     *
+     * 必须连登录页 WebView 的 Cookie / localStorage 一起清，否则重新打开登录页会自动
+     * 带着旧账号登录态被秒抓凭证，用户无法换账号（实机反馈的缺口）。
+     *
+     * **刻意不动"启用"开关**：清除会话只是换账号的第一步，用户马上会重新登录。
+     * 原实现在没有 API Key 时顺手把平台停用，结果"清除会话 → 重新登录 → 数据不刷新"
+     * ——平台被悄悄关掉了，Provider 根本不会被调用（实机踩到的坑）。
+     * 保持启用时卡片会显示"需要重新登录"，语义正确且不会让平台凭空消失。
+     */
+    fun clearWebSession(platform: PlatformType) {
+        viewModelScope.launch {
+            webSessionStore.removeWebSessionFully(platform)
             loadSettings()
         }
     }

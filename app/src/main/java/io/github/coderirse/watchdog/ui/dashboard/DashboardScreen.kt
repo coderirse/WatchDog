@@ -123,7 +123,7 @@ fun DashboardScreen(
         onRefresh = { viewModel.refresh() },
         onNavigateToSettings = onNavigateToSettings,
         onRelogin = { platform ->
-            reloginLauncher.launch(WebLoginActivity.intent(context, platform))
+            reloginLauncher.launch(WebLoginActivity.uiIntent(context, platform))
         }
     )
 }

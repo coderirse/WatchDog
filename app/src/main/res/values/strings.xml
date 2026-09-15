@@ -185,6 +185,8 @@
     <string name="apikey_dialog_session_desc_mimo">%1$s 无官方余额/用量 API，需网页登录会话读取控制台数据。推荐点击下方按钮打开登录页：在平台页面用密码或短信验证码登录，凭证自动抓取并加密保存（小米人机验证需手动完成）。</string>
     <string name="apikey_dialog_session_desc_deepseek">%1$s 未开放官方用量接口，网页登录会话可读取真实用量明细（按模型/日期）。推荐点击下方按钮打开登录页，凭证自动抓取并加密保存；不配置则回退官方余额接口 + 本地估算。</string>
     <string name="apikey_dialog_session_current">当前已配置会话令牌，留空保持不变</string>
+    <string name="apikey_dialog_session_clear">清除网页会话（换账号）</string>
+    <string name="apikey_dialog_session_cleared">网页会话已清除，重新打开登录页可换账号登录</string>
     <string name="apikey_dialog_open_weblogin">打开 %1$s 网页登录（推荐）</string>
 
     <!-- 网页登录页 -->
