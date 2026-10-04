@@ -10,8 +10,10 @@ import io.github.coderirse.watchdog.data.repository.PlatformQuotaProvider
 import io.github.coderirse.watchdog.data.repository.WebSessionAccess
 import io.github.coderirse.watchdog.util.DebugLog
 import io.github.coderirse.watchdog.util.FormatUtils
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import java.io.IOException
 import java.util.Locale
 
 /**
@@ -38,13 +40,31 @@ class MiMoProvider(
         // 与 api-platform_ph 一同发送——只带后者会被网关判为未登录（真机实测 401）
         val cookie = webSessionAccess.getWebSessionCookie(platform)
 
-        // 1) Token Plan 订阅数据（detail / usage 并行拉取，互不阻塞）
+        // 1) Token Plan 订阅数据（detail / usage 并行拉取，互不阻塞）。
+        // 网络异常不能吞成 null：两路全失败时向上抛给 QuotaRepository，由它回退缓存并
+        // 给出正确的网络文案（旧实现吞掉后断网时误报"接口可能已变更"且绕过缓存回退）。
+        // 单路失败只记下原因，不影响另一路；协程取消必须原样传播。
+        var networkError: IOException? = null
         val (detailResponse, usageResponse) = coroutineScope {
             val d = async {
-                runCatching { mimoConsoleApi.getTokenPlanDetail(session, cookie) }.getOrNull()
+                try {
+                    mimoConsoleApi.getTokenPlanDetail(session, cookie)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: IOException) {
+                    networkError = e
+                    null
+                }
             }
             val u = async {
-                runCatching { mimoConsoleApi.getTokenPlanUsage(session, cookie) }.getOrNull()
+                try {
+                    mimoConsoleApi.getTokenPlanUsage(session, cookie)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: IOException) {
+                    networkError = e
+                    null
+                }
             }
             d.await() to u.await()
         }
@@ -68,6 +88,11 @@ class MiMoProvider(
                     DebugLog.i(TAG, "MiMo 401 [$name] respHeaders=$headers")
                 }
             }
+        } else {
+            // release 构建不读诊断体：关闭未消费的错误体，避免连接被持有到 GC
+            listOf(detailResponse, usageResponse).forEach { resp ->
+                if (resp != null && !resp.isSuccessful) runCatching { resp.errorBody()?.close() }
+            }
         }
 
         val unauthorized = (detailResponse?.code() == 401) || (usageResponse?.code() == 401)
@@ -88,6 +113,9 @@ class MiMoProvider(
         // 3) 组合结果：订阅数据存在（套餐/窗口）或余额命中即视为有效数据
         val hasSubscription = planDetail != null || windows.isNotEmpty()
         if (!hasSubscription && balance == null) {
+            // 两路订阅请求都没收到响应（纯网络故障）：向上传播，让 QuotaRepository
+            // 走"异常 → 缓存回退"机制并给出正确的网络文案，而不是误报"接口已变更"
+            networkError?.let { throw it }
             return when {
                 // MiMo 走小米账号 OAuth（含人机验证），无法后台续期；官方 Cookie 有效期 24h，
                 // 过期后引导用户进入登录页（WebView 会话仍有效时自动完成，无需再输账号）
@@ -115,25 +143,33 @@ class MiMoProvider(
             // （网页实际调用的是 /api/v1/balance，故该路径应命中）
             DebugLog.i(
                 TAG,
-                "MiMo balance probe: hit=${balance != null} " +
-                    "value=${balance?.balance} currency=${balance?.currency} " +
+                "MiMo balance probe: hit=${balance != null} path=${balance?.path} " +
+                    "value=${balance?.info?.balance} currency=${balance?.info?.currency} " +
                     "savedPath=${runCatching { settingsStore.getProbePath(platform) }.getOrNull()}"
             )
         }
 
         if (balance != null) {
-            // CNY 余额走本地月度追踪（与 DeepSeek/Kimi 相同机制），并参与总余额/趋势
-            val currency = balance.currency ?: "CNY"
-            val isCny = currency.equals("CNY", true)
-            val monthlyUsage = if (isCny) {
-                settingsStore.recordBalanceAndGetMonthlyUsage(platform, balance.balance)
+            // CNY 余额走本地月度追踪（与 DeepSeek/Kimi 相同机制），并参与总余额/趋势。
+            // 信任条件：命中实测路径（/api/v1/balance，网页控制台实际调用的接口）或响应
+            // 带显式 CNY 货币。其余候选路径未实测，可能返回无货币字段的 Credits 类数值——
+            // 旧实现把它们默认当 CNY 写入持久化月度追踪并计入总额，属于脏数据来源；
+            // 现改为仅展示（非 CNY 标签），不追踪、不进 CNY 汇总。
+            val trustedCny = balance.path == VERIFIED_BALANCE_PATH ||
+                balance.info.currency.equals("CNY", ignoreCase = true)
+            val monthlyUsage = if (trustedCny) {
+                settingsStore.recordBalanceAndGetMonthlyUsage(platform, balance.info.balance)
             } else null
             result = result.copy(
-                totalBalance = String.format(Locale.US, "%.2f", balance.balance),
-                availableBalance = String.format(Locale.US, "%.2f", balance.balance),
-                monthlyUsage = if (monthlyUsage != null && monthlyUsage >= 0.01)
-                    String.format(Locale.US, "%.2f", monthlyUsage) else "0.00",
-                currency = currency
+                totalBalance = String.format(Locale.US, "%.2f", balance.info.balance),
+                availableBalance = String.format(Locale.US, "%.2f", balance.info.balance),
+                monthlyUsage = when {
+                    monthlyUsage != null && monthlyUsage >= 0.01 ->
+                        String.format(Locale.US, "%.2f", monthlyUsage)
+                    trustedCny -> "0.00"  // 已确认 CNY，追踪值为真 0
+                    else -> ""            // 货币不明：显示未知占位符而非假 0
+                },
+                currency = if (trustedCny) "CNY" else (balance.info.currency ?: "Credits")
             )
         }
 
@@ -147,23 +183,29 @@ class MiMoProvider(
     private suspend fun probeBalance(
         session: String,
         cookie: String?
-    ): MiMoConsoleParser.BalanceInfo? {
+    ): BalanceHit? {
         // 1) 上次命中的路径优先
         val saved = runCatching { settingsStore.getProbePath(platform) }.getOrNull()
         if (saved != null) {
-            val hit = probePath(session, cookie, saved)
-            if (hit != null) return hit
+            probePath(session, cookie, saved)?.let { return BalanceHit(it, saved) }
             // 缓存路径失效（接口变更）→ 回退全量探测，探测成功后覆盖
         }
         // 2) 全量候选探测
         for (path in MiMoConsoleParser.BALANCE_CANDIDATES) {
             if (path == saved) continue
-            val info = probePath(session, cookie, path) ?: continue
-            runCatching { settingsStore.saveProbePath(platform, path) }
-            return info
+            probePath(session, cookie, path)?.let {
+                runCatching { settingsStore.saveProbePath(platform, path) }
+                return BalanceHit(it, path)
+            }
         }
         return null
     }
+
+    /** 探测命中结果：数值 + 命中路径（路径决定该数值是否可信为 CNY 余额）。 */
+    private data class BalanceHit(
+        val info: MiMoConsoleParser.BalanceInfo,
+        val path: String
+    )
 
     private suspend fun probePath(
         session: String,
@@ -172,7 +214,13 @@ class MiMoProvider(
     ): MiMoConsoleParser.BalanceInfo? {
         val body = runCatching {
             val resp = mimoConsoleApi.getRaw(session, cookie, path)
-            if (resp.isSuccessful) resp.body()?.string() else null
+            if (resp.isSuccessful) {
+                resp.body()?.string()
+            } else {
+                // 未消费的错误体要关闭，释放底层连接
+                runCatching { resp.errorBody()?.close() }
+                null
+            }
         }.getOrNull() ?: return null
         return MiMoConsoleParser.parseBalanceInfo(body)
     }
@@ -186,5 +234,8 @@ class MiMoProvider(
 
     private companion object {
         const val TAG = "WatchDogMiMo"
+
+        /** 实测可用的余额路径（网页控制台实际调用的接口），作为余额数值的信任判定依据。 */
+        const val VERIFIED_BALANCE_PATH = "/api/v1/balance"
     }
 }

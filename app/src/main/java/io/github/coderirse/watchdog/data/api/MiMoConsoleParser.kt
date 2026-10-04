@@ -22,14 +22,15 @@ object MiMoConsoleParser {
      * 带会话后不存在路径将回 404/HTML，可被 [parseBalanceInfo] 过滤。
      */
     val BALANCE_CANDIDATES = listOf(
-        "/api/v1/account/balance",
-        "/api/v1/credit/balance",
+        // 实测路径置顶：网页控制台实际调用的余额接口，避免先撞未实测端点拿到歧义数值
         "/api/v1/balance",
+        "/api/v1/account/balance",
         "/api/v1/user/balance",
         "/api/v1/wallet/balance",
         "/api/v1/accountBalance",
         "/api/v1/cashBalance",
-        "/api/v1/finance/balance"
+        "/api/v1/finance/balance",
+        "/api/v1/credit/balance"
     )
 
     /** Token Plan 订阅详情（计划名/额度/到期）。 */
@@ -130,7 +131,9 @@ object MiMoConsoleParser {
 
     /**
      * 从探测响应中解析余额；无法识别（HTML 登录页 / 404 页 / 字段缺失）返回 null。
-     * 兼容常见字段：balance / cashBalance / totalBalance / availableBalance / creditBalance / credits。
+     * 兼容常见字段：balance / cashBalance / totalBalance / availableBalance。
+     * 不含裸 "amount"/"credits" 等宽泛键：未实测端点（如 Credits 类）的此类字段
+     * 会被误当人民币余额（货币真伪由 MiMoProvider 按命中路径与显式货币字段判定）。
      */
     fun parseBalanceInfo(text: String?): BalanceInfo? {
         val root = JsonExt.parseJson(text) ?: return null
@@ -138,8 +141,7 @@ object MiMoConsoleParser {
 
         val balance = JsonExt.findNumber(obj, listOf(
             "balance", "cashBalance", "cash_balance", "totalBalance", "total_balance",
-            "availableBalance", "available_balance", "creditBalance", "credit_balance",
-            "amount", "availableAmount", "available_amount", "credits"
+            "availableBalance", "available_balance"
         )) ?: return null
         // 余额可能以"分"为单位（金额类平台常见）；但无实证，不做换算，保持原值。
 

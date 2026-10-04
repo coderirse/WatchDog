@@ -42,10 +42,17 @@ class MiMoSessionVerifier(
             mimoConsoleApi.getTokenPlanDetail(phToken, cookie)
         }.getOrNull() ?: return@withContext Result.Inconclusive("网络请求失败")
 
-        when {
-            response.isSuccessful -> Result.Valid
-            response.code() == 401 || response.code() == 403 -> Result.Rejected
-            else -> Result.Inconclusive("HTTP ${response.code()}")
+        // 无论哪个分支都要关闭响应体：登录页每 1.5s 轮询本方法，body/errorBody 不消费
+        // 会把底层连接持有到 GC，网络异常场景下连接累积（响应体内容本方法从不读取）。
+        try {
+            when {
+                response.isSuccessful -> Result.Valid
+                response.code() == 401 || response.code() == 403 -> Result.Rejected
+                else -> Result.Inconclusive("HTTP ${response.code()}")
+            }
+        } finally {
+            runCatching { response.body()?.close() }
+            runCatching { response.errorBody()?.close() }
         }
     }
 
