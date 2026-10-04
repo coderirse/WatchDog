@@ -28,8 +28,8 @@ android {
         applicationId = "io.github.coderirse.watchdog"
         minSdk = 24
         targetSdk = 37
-        versionCode = 18
-        versionName = "1.8.1"
+        versionCode = 19
+        versionName = "1.8.2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
