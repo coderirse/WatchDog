@@ -21,3 +21,5 @@ local.properties
 
 # ZCode local tooling
 .zcode/
+.v2c/
+/out/
