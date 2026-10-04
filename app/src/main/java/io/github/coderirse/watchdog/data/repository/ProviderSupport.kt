@@ -21,9 +21,13 @@ internal object ProviderSupport {
     fun unrecognizedResponse(platform: PlatformType): QuotaInfo =
         QuotaInfo.error(platform, "响应格式无法识别，接口可能已变更")
 
-    /** 金额格式化为两位小数（7.56019→7.56；null/无法解析→0.00）。 */
+    /**
+     * 金额格式化为两位小数（7.56019→7.56；null/无法解析→0.00）。
+     * 千分位逗号先归一化：Kimi 控制台渲染 "1,234.56"，toDoubleOrNull 对其返回 null，
+     * 旧实现会把 ≥1000 的余额坍缩成 "0.00" 且照常展示。
+     */
     fun fmtAmount(v: String?): String {
-        val d = v?.toDoubleOrNull() ?: return "0.00"
+        val d = v?.replace(",", "")?.trim()?.toDoubleOrNull() ?: return "0.00"
         return String.format(Locale.US, "%.2f", d)
     }
 
