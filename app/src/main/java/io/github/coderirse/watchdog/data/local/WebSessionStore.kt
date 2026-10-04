@@ -51,7 +51,14 @@ class WebSessionStore(context: Context) : WebSessionAccess {
             )
             val committed = prefs.edit().apply {
                 putString(tokenKey(platform), storedToken)
-                storedCookie?.let { putString(cookieKey(platform), it) }
+                if (storedCookie != null) {
+                    putString(cookieKey(platform), storedCookie)
+                } else {
+                    // 本次未携带 Cookie（如手动粘贴 token 的换账号路径）必须清掉旧 Cookie：
+                    // 残留的旧账号 Cookie 会与新 token 混发，网关按整串 Cookie 判定登录态，
+                    // 要么 401"会话已过期"，要么按 Cookie 识别返回旧账号数据
+                    remove(cookieKey(platform))
+                }
             }.commit()
             DebugLog.d(
                 TAG,
@@ -98,7 +105,29 @@ class WebSessionStore(context: Context) : WebSessionAccess {
         withContext(Dispatchers.Main) {
             runCatching {
                 val cookieManager = android.webkit.CookieManager.getInstance()
-                cookieManager.removeAllCookies(null)
+                // CookieManager 没有"按域删除"的 API。旧实现 removeAllCookies(null) 清掉
+                // 所有域的 Cookie——换一个平台的账号会连带登出其它平台的 WebView 登录态，
+                // 与本法注释宣称的"只按平台自己的域清理"相矛盾。改为枚举平台域（含共享
+                // 父域）可见的 Cookie 逐条置过期删除；跨根域的账号体系 Cookie 与
+                // 非根路径 Cookie 不在 best-effort 清理范围内。
+                val host = runCatching { java.net.URI(origin).host }.getOrNull()
+                val urls = buildList {
+                    add(origin)
+                    if (host != null && host.count { it == '.' } >= 2) {
+                        add(origin.replaceFirst(host, host.substringAfter('.')))
+                    }
+                }
+                for (url in urls) {
+                    val cookieHeader = cookieManager.getCookie(url) ?: continue
+                    for (pair in cookieHeader.split(";")) {
+                        val name = pair.substringBefore('=').trim()
+                        if (name.isEmpty()) continue
+                        cookieManager.setCookie(
+                            url,
+                            "$name=; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Max-Age=0"
+                        )
+                    }
+                }
                 cookieManager.flush()
                 android.webkit.WebStorage.getInstance().deleteOrigin(origin)
             }

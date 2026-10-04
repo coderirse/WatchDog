@@ -46,9 +46,13 @@ object SecureCipher {
 
     /**
      * 本次加密是否降级为明文存储。
-     * 以"返回值 ≠ 入参"判定：加密成功必然带上了 [ENCRYPTED_PREFIX]，不可能与明文相同。
+     * 以 [FALLBACK_PREFIX] 信封判定：加密失败返回 `plain:v1:` 前缀信封，成功则带
+     * `enc:v1:`。旧实现以 `stored == plain` 判定，是为"失败返回裸明文"的时代写的——
+     * v1.8.1 把失败返回改为信封后该判定恒为 false，三个写入点的降级标记全部失效，
+     * 「Keystore 不可用→明文存储」告警整体丢失（用户与设置页均无提示）。
+     * 注：v1.8.1 之前降级写入的无前缀裸明文会在下次保存时被重新加密，无需回溯标记。
      */
-    fun isDegraded(stored: String, plain: String): Boolean = stored == plain
+    fun isDegraded(stored: String, plain: String): Boolean = stored.startsWith(FALLBACK_PREFIX)
 
     /**
      * 解密；兼容三种历史形态：

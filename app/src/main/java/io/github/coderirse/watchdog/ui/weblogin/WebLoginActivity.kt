@@ -83,6 +83,16 @@ class WebLoginActivity : ComponentActivity() {
         DebugLog.i("WatchDogLogin", msg)
     }
 
+    /**
+     * 日志用 URL 脱敏：剥掉查询串与 fragment，只留 scheme+host+path。
+     * OAuth 回跳 URL 常携带授权 code/token 等敏感查询参数，整条记录进日志会落盘。
+     */
+    private fun redactUrl(url: String?): String =
+        if (url.isNullOrBlank()) "null"
+        else runCatching {
+            android.net.Uri.parse(url).buildUpon().query(null).fragment(null).toString()
+        }.getOrDefault("<unparsable>")
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         loginPlatform = intent.getStringExtra(EXTRA_PLATFORM)
@@ -285,18 +295,18 @@ class WebLoginActivity : ComponentActivity() {
         }
         webView.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-                flog("nav -> ${request.url}")
+                flog("nav -> ${redactUrl(request.url.toString())}")
                 return false
             }
 
             override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) {
                 super.onPageStarted(view, url, favicon)
-                flog("start $url")
+                flog("start ${redactUrl(url)}")
             }
 
             override fun onPageFinished(view: WebView, url: String?) {
                 super.onPageFinished(view, url)
-                flog("finish $url")
+                flog("finish ${redactUrl(url)}")
                 // Kimi：探测页面实际发起的 API 请求（找出控制台用量接口路径）
                 // 仅 debug 构建执行：这是纯诊断脚本，release 下既无日志出口也无收益，
                 // 不应在用户登录页里注入并运行多余 JS
@@ -317,9 +327,11 @@ class WebLoginActivity : ComponentActivity() {
                 error: android.webkit.WebResourceError
             ) {
                 super.onReceivedError(view, request, error)
-                android.util.Log.w(
-                    "WatchDogLogin",
-                    "resource-error ${request.url} ${error.description} (code=${error.errorCode}) main=${request.isForMainFrame}"
+                // 走 flog + URL 脱敏：裸 android.util.Log 在 release 同样生效，
+                // 且完整 URL 的 OAuth 回调参数（code/token）属敏感信息
+                flog(
+                    "resource-error ${redactUrl(request.url.toString())} ${error.description} " +
+                        "(code=${error.errorCode}) main=${request.isForMainFrame}"
                 )
             }
 
@@ -329,9 +341,9 @@ class WebLoginActivity : ComponentActivity() {
                 errorResponse: android.webkit.WebResourceResponse
             ) {
                 super.onReceivedHttpError(view, request, errorResponse)
-                android.util.Log.w(
-                    "WatchDogLogin",
-                    "http-error ${request.url} status=${errorResponse.statusCode} main=${request.isForMainFrame}"
+                flog(
+                    "http-error ${redactUrl(request.url.toString())} " +
+                        "status=${errorResponse.statusCode} main=${request.isForMainFrame}"
                 )
             }
         }
@@ -388,9 +400,14 @@ class WebLoginActivity : ComponentActivity() {
         val wv = webViewReady ?: run { if (manual) toastNoSession(); return }
         runCatching {
             wv.evaluateJavascript(kimiCaptureScript) { raw ->
-                flog("kimi capture raw=${raw?.take(120)} url=${wv.url}")
+                // 只记长度与键名：raw 与 obj 都以 {"token":"eyJ…"} 开头，
+                // 截取内容必然带出 token 明文前缀（DebugLog 纪律：令牌只记长度与名字）
+                flog("kimi capture rawLen=${raw?.length ?: -1} url=${wv.url}")
                 val obj = parseJsObject(raw)
-                flog("kimi parsed obj=${obj?.toString()?.take(120)} tokLen=${obj?.optString("token")?.length}")
+                flog(
+                    "kimi parsed keys=${obj?.keys()?.asSequence()?.toList() ?: "null"} " +
+                        "tokLen=${obj?.optString("token")?.length}"
+                )
                 // 每次轮询都尝试保存快照：Kimi 首页金额是 SPA 异步渲染，
                 // 首次采集可能为 null，页面渲染完成后才有值，故持续采到非空即覆盖
                 if (obj != null) {
@@ -479,12 +496,34 @@ class WebLoginActivity : ComponentActivity() {
             // 采集结构化金额：定位「标签文本」元素，取其所在行的容器（标签+紧邻数值）。
             // 不用整棵父级拍平文本——那样会跨指标串位（today 误匹配到 balance）。
             var balance = null, today = null, month = null, total = null;
+            function boundaryOk(s, idx, len){
+              var before = idx > 0 ? s.charAt(idx - 1) : '';
+              var after = s.charAt(idx + len);
+              var bad = /[0-9A-Za-z.]/;
+              return !bad.test(before) && !(after && bad.test(after));
+            }
             function grabNumber(container){
               if(!container) return null;
-              // 在容器里优先取「￥/¥ 后或独立数字」形如 7.56019 / 1.73004 的值（含小数）
-              var txt = (container.textContent||'').replace(/[￥¥]/g, ' ');
-              var m = txt.match(/\d{1,3}(?:,\d{3})*(?:\.\d{1,6})/);
-              return m ? m[0] : null;
+              var txt = container.textContent || '';
+              if(!txt) return null;
+              // 1) 货币符号锚定（兼容整数金额如 ¥125）：置信度最高
+              var cur = txt.match(/(?:￥|¥)\s*(\d{1,3}(?:,\d{3})*(?:\.\d{1,6})?|\d+)/);
+              if(cur) return cur[1];
+              // 2/3) 千分位整数与带小数点数字：前后不得紧邻字母/数字/点，
+              // 排除日期(2026.10.02)、版本号(kimi-k2.5-turbo)等误匹配。
+              // 手写边界检查而非 lookbehind，兼容旧 WebView
+              var plain = txt.replace(/[￥¥]/g, ' ');
+              var grouped = /(\d{1,3}(?:,\d{3})+)/g;
+              var g;
+              while((g = grouped.exec(plain)) !== null){
+                if(boundaryOk(plain, g.index, g[0].length)) return g[1];
+              }
+              var dec = /(\d{1,3}(?:,\d{3})*\.\d{1,6})/g;
+              var d;
+              while((d = dec.exec(plain)) !== null){
+                if(boundaryOk(plain, d.index, d[0].length)) return d[1];
+              }
+              return null;
             }
             try{
               var all = document.querySelectorAll('body *');
@@ -520,10 +559,8 @@ class WebLoginActivity : ComponentActivity() {
                 buildStorageCaptureScript("platform.deepseek.com", "/api/v0/users/get_user_summary")
             ) { raw ->
                 if (io.github.coderirse.watchdog.BuildConfig.DEBUG) {
-                    android.util.Log.d(
-                        "WatchDogLogin",
-                        "deepseek capture raw=${raw?.take(80)} url=${wv.url}"
-                    )
+                    // 只记长度：raw 以 {"token":"…"} 开头，截取内容会带出 token 明文前缀
+                    flog("deepseek capture rawLen=${raw?.length ?: -1} url=${wv.url}")
                 }
                 val obj = parseJsObject(raw)
                 when {
@@ -705,12 +742,12 @@ class WebLoginActivity : ComponentActivity() {
                     "platform=$loginPlatform cookies=${describeCookies(cookie)} url=${webViewReady?.url}"
             )
             if (loginPlatform == PlatformType.MIMO) {
-                // 关键判断：抓到的是不是 api-platform_ph，以及它的前缀形态
+                // 关键判断：抓到的是不是 api-platform_ph（只记长度——前缀也是凭证片段，
+                // 违反"令牌只记长度与名字"纪律）
                 DebugLog.d(
                     "WatchDogLogin",
                     "mimo phToken=" +
-                        (extractPhCookie(cookie)?.let { "len=${it.length} prefix=${it.take(6)}" }
-                            ?: "NOT FOUND")
+                        (extractPhCookie(cookie)?.let { "len=${it.length}" } ?: "NOT FOUND")
                 )
             }
         }
