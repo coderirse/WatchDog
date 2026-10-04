@@ -33,14 +33,13 @@ class QuotaCacheStore(context: Context) : QuotaCache {
     private val writeGson = Gson()
     private val readGson = QuotaInfoDeserializer.cacheGson
 
-    init {
-        // 键名带 versionCode 使版本升级自然失效旧缓存，但旧键会永久残留在存储里。
-        // 启动时清理一次历史版本键（"quota_v<数字>_" 且非当前版本），避免无界增长。
-        purgeStaleKeys()
-    }
+    /** 是否已执行过本次进程内的历史键清理（幂等；@Volatile 仅为避免重复跑，竞态无害）。 */
+    @Volatile
+    private var purgeDone = false
 
     override suspend fun get(platform: PlatformType): QuotaInfo? {
         return withContext(Dispatchers.IO) {
+            purgeStaleKeysOnce()
             val json = prefs.getString(key(platform), null) ?: return@withContext null
             runCatching { readGson.fromJson(json, QuotaInfo::class.java) }.getOrNull()
         }
@@ -48,6 +47,7 @@ class QuotaCacheStore(context: Context) : QuotaCache {
 
     override suspend fun put(platform: PlatformType, quota: QuotaInfo) {
         withContext(Dispatchers.IO) {
+            purgeStaleKeysOnce()
             prefs.edit { putString(key(platform), writeGson.toJson(quota)) }
         }
     }
@@ -55,8 +55,15 @@ class QuotaCacheStore(context: Context) : QuotaCache {
     private fun key(platform: PlatformType): String =
         "quota_v${BuildConfig.VERSION_CODE}_${platform.name}"
 
-    /** 删除非当前 versionCode 的历史缓存键（幂等，无旧键时不写入）。 */
-    private fun purgeStaleKeys() {
+    /**
+     * 删除非当前 versionCode 的历史缓存键（幂等，无旧键时不写入）。
+     * 清理不紧急，挂在首个 get/put 的 IO 协程里顺带执行——旧实现在 init 里同步跑
+     * `prefs.all`，而本类构造于 Application.onCreate 主线程路径，SharedPreferences
+     * 首次访问会同步从磁盘加载整个 XML，构成启动期主线程磁盘 I/O（StrictMode 违例）。
+     */
+    private fun purgeStaleKeysOnce() {
+        if (purgeDone) return
+        purgeDone = true
         runCatching {
             val currentPrefix = "quota_v${BuildConfig.VERSION_CODE}_"
             val stale = prefs.all.keys.filter { it.startsWith(PREFIX_QUOTA) && !it.startsWith(currentPrefix) }

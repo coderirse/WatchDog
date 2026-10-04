@@ -127,7 +127,7 @@ class QuotaInfoDeserializationTest {
         assertEquals("deepseek-chat", restored.modelUsages.first().modelName)
         assertEquals(1_000L, restored.modelUsages.first().totalTokens)
         assertEquals(1, restored.dailyModelUsage.size)
-        assertEquals(0.42, restored.dailyModelUsage.first().cost, 0.0001)
+        assertEquals(0.42, restored.dailyModelUsage.first().cost!!, 0.0001)
         assertEquals(1, restored.quotaWindows.size)
         assertEquals("周", restored.quotaWindows.first().name)
         assertEquals(MonthlyUsageSource.LOCAL_ESTIMATE, restored.monthlyUsageSource)
@@ -139,6 +139,39 @@ class QuotaInfoDeserializationTest {
 
         // 断言写入格式稳定（null 字段被省略），避免缓存体积膨胀与解析歧义
         assertFalse(json.contains(":null"))
+    }
+
+    @Test
+    fun `嵌套列表脏元素被丢弃而非注入 null`() {
+        // 嵌套元素此前走 plainGson 反射：缺 modelName 的 ModelUsage 会被注入 null，
+        // 未知枚举名的 platform 也会被注入 null，UI 读取即 NPE。
+        // 防线应把脏元素整体丢弃、合法元素保留。
+        val json = """
+            {
+              "platform": "DEEPSEEK",
+              "isConfigured": true,
+              "isAvailable": true,
+              "modelUsages": [
+                {"totalTokens": 5},
+                {"modelName": "deepseek-chat", "totalTokens": 100}
+              ],
+              "dailyModelUsage": [
+                {"date": "2026-10-01", "model": "m1"},
+                {"date": "2026-10-01", "platform": "DEEPSEEK", "model": "m2", "cost": 1.25}
+              ],
+              "dailyUsage": [
+                {"platform": "DEEPSEEK", "date": "2026-10-01"}
+              ]
+            }
+        """.trimIndent()
+        val q = gson.fromJson(json, QuotaInfo::class.java)
+        assertEquals(1, q.modelUsages.size)
+        assertEquals("deepseek-chat", q.modelUsages.first().modelName)
+        assertEquals(1, q.dailyModelUsage.size)
+        assertEquals("m2", q.dailyModelUsage.first().model)
+        assertEquals(1.25, q.dailyModelUsage.first().cost!!, 0.0001)
+        assertEquals(1, q.dailyUsage.size)
+        assertEquals("DEEPSEEK", q.dailyUsage.first().platform.name)
     }
 }
 

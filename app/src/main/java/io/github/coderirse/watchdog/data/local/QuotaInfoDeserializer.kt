@@ -57,17 +57,17 @@ internal object QuotaInfoDeserializer : JsonDeserializer<QuotaInfo> {
             availableBalance = o.stringOr("availableBalance"),
             errorMessage = o.stringOr("errorMessage"),
             modelUsages = o.arrayOrNull("modelUsages")
-                ?.mapNotNull { item -> gsonOrNull<ModelUsage>(item) } ?: emptyList(),
+                ?.mapNotNull { item -> modelUsageOf(item.objectOrNull()) } ?: emptyList(),
             dailyUsage = o.arrayOrNull("dailyUsage")
-                ?.mapNotNull { item -> gsonOrNull<DailyUsage>(item) } ?: emptyList(),
+                ?.mapNotNull { item -> dailyUsageOf(item.objectOrNull()) } ?: emptyList(),
             dailyModelUsage = o.arrayOrNull("dailyModelUsage")
-                ?.mapNotNull { item -> gsonOrNull<DailyModelUsage>(item) } ?: emptyList(),
+                ?.mapNotNull { item -> dailyModelUsageOf(item.objectOrNull()) } ?: emptyList(),
             lastUpdated = o.longOr("lastUpdated") ?: System.currentTimeMillis(),
             isStale = o.booleanOr("isStale") ?: false,
             isEstimate = o.booleanOr("isEstimate") ?: false,
             planName = o.stringOr("planName"),
             quotaWindows = o.arrayOrNull("quotaWindows")
-                ?.mapNotNull { item -> gsonOrNull<QuotaWindow>(item) } ?: emptyList(),
+                ?.mapNotNull { item -> quotaWindowOf(item.objectOrNull()) } ?: emptyList(),
             boosterInfo = o.stringOr("boosterInfo"),
             dataSourceLabel = o.stringOr("dataSourceLabel"),
             consoleDiag = o.stringOr("consoleDiag"),
@@ -76,9 +76,70 @@ internal object QuotaInfoDeserializer : JsonDeserializer<QuotaInfo> {
         )
     }
 
-    /** 用普通 Gson 解析嵌套对象（不经过本适配器，故不会递归到 QuotaInfo 本身）。 */
-    private inline fun <reified T> gsonOrNull(el: JsonElement): T? =
-        runCatching { plainGson.fromJson(el, T::class.java) }.getOrNull()
+    // ===== 嵌套元素的手动规范化 =====
+    //
+    // 旧实现把嵌套列表元素交给 plainGson 反射反序列化，防线只覆盖了 QuotaInfo 顶层。
+    // 反射同样绕过 Kotlin 默认值：缺字段 → 非空字段被注入 null（如 ModelUsage.modelName、
+    // DailyUsage.platform/date）；未知枚举名 → Gson 默认适配器返回 null 而不抛异常，
+    // runCatching 拦不住。UI 一旦读取即 NPE——恰是本类宣称要防的"离线兜底脏数据"。
+    // 故嵌套类型也逐字段手动读取：非空字段缺失/枚举未知 → 整个元素视为脏数据丢弃。
+
+    private fun JsonElement.objectOrNull(): JsonObject? = takeIf { it.isJsonObject }?.asJsonObject
+
+    private fun modelUsageOf(o: JsonObject?): ModelUsage? {
+        o ?: return null
+        return ModelUsage(
+            modelName = o.stringOr("modelName") ?: return null,
+            requestCount = o.longOr("requestCount") ?: 0,
+            totalTokens = o.longOr("totalTokens") ?: 0,
+            inputTokens = o.longOr("inputTokens") ?: 0,
+            outputTokens = o.longOr("outputTokens") ?: 0,
+            cost = o.stringOrNumber("cost") ?: "0.00"
+        )
+    }
+
+    private fun dailyUsageOf(o: JsonObject?): DailyUsage? {
+        o ?: return null
+        return DailyUsage(
+            date = o.stringOr("date") ?: return null,
+            platform = platformOrNull(o.stringOr("platform")) ?: return null,
+            totalTokens = o.longOr("totalTokens") ?: 0,
+            inputTokens = o.longOr("inputTokens") ?: 0,
+            outputTokens = o.longOr("outputTokens") ?: 0,
+            requests = o.longOr("requests") ?: 0,
+            cost = o.doubleOr("cost")
+        )
+    }
+
+    private fun dailyModelUsageOf(o: JsonObject?): DailyModelUsage? {
+        o ?: return null
+        return DailyModelUsage(
+            date = o.stringOr("date") ?: return null,
+            platform = platformOrNull(o.stringOr("platform")) ?: return null,
+            model = o.stringOr("model") ?: return null,
+            totalTokens = o.longOr("totalTokens") ?: 0,
+            inputTokens = o.longOr("inputTokens") ?: 0,
+            outputTokens = o.longOr("outputTokens") ?: 0,
+            requests = o.longOr("requests") ?: 0,
+            cost = o.doubleOr("cost")
+        )
+    }
+
+    private fun quotaWindowOf(o: JsonObject?): QuotaWindow? {
+        o ?: return null
+        // QuotaWindow 全字段可空：任何字段缺失都不影响其余字段展示
+        return QuotaWindow(
+            name = o.stringOr("name"),
+            used = o.doubleOr("used"),
+            remaining = o.doubleOr("remaining"),
+            limit = o.doubleOr("limit"),
+            resetTime = o.longOr("resetTime"),
+            expiresAt = o.longOr("expiresAt")
+        )
+    }
+
+    private fun platformOrNull(name: String?): PlatformType? =
+        name?.let { runCatching { PlatformType.valueOf(it) }.getOrNull() }
 
     private fun JsonObject.arrayOrNull(name: String): List<JsonElement>? =
         get(name)?.takeIf { it.isJsonArray }?.asJsonArray?.toList()
@@ -92,12 +153,17 @@ internal object QuotaInfoDeserializer : JsonDeserializer<QuotaInfo> {
     private fun JsonObject.longOr(name: String): Long? =
         get(name)?.takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isNumber }?.asLong
 
+    private fun JsonObject.doubleOr(name: String): Double? =
+        get(name)?.takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isNumber }?.asDouble
+
+    /** 字符串或数字原语统一取文本（防御旧缓存把 String 字段写成数字）。 */
+    private fun JsonObject.stringOrNumber(name: String): String? =
+        get(name)?.takeIf { it.isJsonPrimitive }?.asString
+
     private fun platformOf(name: String?): PlatformType =
         name?.let { runCatching { PlatformType.valueOf(it) }.getOrNull() } ?: PlatformType.DEEPSEEK
 
     private fun monthlyUsageSourceOf(name: String?): MonthlyUsageSource =
         name?.let { runCatching { MonthlyUsageSource.valueOf(it) }.getOrNull() }
             ?: MonthlyUsageSource.SERVER
-
-    private val plainGson: Gson = Gson()
 }
