@@ -47,17 +47,24 @@ class DeepSeekProvider(
         } else {
             fetchConsoleOnly()
         }
-        // 官方-only（无控制台数据）时叠加本地月度估算，并标注为估算口径
-        return if (raw.isAvailable && raw.errorMessage == null && raw.dataSourceLabel == null) {
-            val balance = raw.totalBalance.toDoubleOrNull()
-            if (balance != null) {
-                val usage = settingsStore.recordBalanceAndGetMonthlyUsage(platform, balance)
-                raw.copy(
-                    monthlyUsage = ProviderSupport.fmtUsage(usage),
-                    monthlyUsageSource = MonthlyUsageSource.LOCAL_ESTIMATE
-                )
-            } else raw
-        } else raw
+        return enrichMonthlyUsage(raw)
+    }
+
+    /**
+     * "本月用量"缺失时用本地增量累计补齐并标注估算口径。
+     * 旧实现只在 dataSourceLabel == null 时执行，而所有控制台路径都带标签，该分支
+     * 从未可达：控制台路径缺用量时被渲染成假 0（SERVER 口径），console-only 路径
+     * 标着 LOCAL_ESTIMATE 却从未计算。余额不可解析时保持未知（空串占位），不造假 0。
+     */
+    private suspend fun enrichMonthlyUsage(raw: QuotaInfo): QuotaInfo {
+        if (!raw.isAvailable || raw.errorMessage != null) return raw
+        if (raw.monthlyUsage.isNotBlank()) return raw  // 控制台真实用量，保持 SERVER 口径
+        val balance = raw.totalBalance.toDoubleOrNull() ?: return raw
+        val usage = settingsStore.recordBalanceAndGetMonthlyUsage(platform, balance)
+        return raw.copy(
+            monthlyUsage = ProviderSupport.fmtUsage(usage),
+            monthlyUsageSource = MonthlyUsageSource.LOCAL_ESTIMATE
+        )
     }
 
     private suspend fun fetchOfficial(authHeader: String): QuotaInfo {
@@ -76,7 +83,10 @@ class DeepSeekProvider(
             isAvailable = body.isAvailable,
             isConfigured = true,
             totalBalance = balance?.totalBalance ?: "",
-            currency = balance?.currency ?: "CNY"
+            currency = balance?.currency ?: "CNY",
+            // "本月用量"留给 enrichMonthlyUsage 补齐：官方接口不提供，未知时不得渲染成 "0"
+            monthlyUsage = "",
+            monthlyUsageSource = null
         )
 
         // 可选增强：使用 WebLoginActivity 抓取的网页会话（userToken + Cookie）读取控制台
@@ -101,10 +111,10 @@ class DeepSeekProvider(
         return base.copy(
             totalBalance = wallet?.let { ProviderSupport.fmtAmount(it.balance) } ?: base.totalBalance,
             currency = currency,
-            // 控制台有真实本月用量时以其为准（SERVER 口径，QuotaInfo 默认值）；
-            // 缺失则留空，由外层 fetch() 用本地增量累计补齐并标注估算
-            monthlyUsage = consoleData.monthlyUsage?.let { ProviderSupport.fmtUsage(it) }
-                ?: base.monthlyUsage,
+            // 控制台有真实本月用量时以其为准（SERVER 口径）；缺失时保持空串未知，
+            // 由 enrichMonthlyUsage 用本地增量累计补齐并标注估算
+            monthlyUsage = consoleData.monthlyUsage?.let { ProviderSupport.fmtUsage(it) } ?: "",
+            monthlyUsageSource = if (consoleData.monthlyUsage != null) MonthlyUsageSource.SERVER else null,
             modelUsages = consoleData.modelUsages,
             dailyUsage = consoleData.dailyUsage,
             dailyModelUsage = consoleData.dailyModelUsage,
@@ -133,10 +143,16 @@ class DeepSeekProvider(
         val cookie = runCatching { webSessionAccess.getWebSessionCookie(platform) }.getOrNull()
         val console = runCatching { fetchConsole(session, cookie) }.getOrNull()
 
+        val codes = console?.codes.orEmpty()
         val data = console?.data
             ?: return QuotaInfo
-                .error(platform, consoleFailureMessage(console?.codes.orEmpty()))
-                .copy(needsRelogin = true, consoleDiag = consoleFailureDiag(console?.codes.orEmpty()))
+                .error(platform, consoleFailureMessage(codes))
+                .copy(
+                    // 仅会话失效（401/403）才提示重登：网络故障/限流/接口变更时会话仍有效，
+                    // 重登无济于事（旧实现一律置 true，与失败文案自相矛盾）
+                    needsRelogin = codes.any { it == 401 || it == 403 },
+                    consoleDiag = consoleFailureDiag(codes)
+                )
 
         val wallet = data.summary?.primaryBalance
             ?: return QuotaInfo
@@ -153,7 +169,7 @@ class DeepSeekProvider(
             monthlyUsageSource = if (data.monthlyUsage != null) {
                 MonthlyUsageSource.SERVER
             } else {
-                MonthlyUsageSource.LOCAL_ESTIMATE
+                null  // 未知口径留给 enrichMonthlyUsage 以本地估算补齐，不再虚标估算
             },
             modelUsages = data.modelUsages,
             dailyUsage = data.dailyUsage,
@@ -197,11 +213,12 @@ class DeepSeekProvider(
             Triple(s.await(), c.await(), a.await())
         }
         val codes = listOf(summaryResp, costResp, amountResp).mapNotNull { it?.code() }
-        // 先读出响应体再解析：body 只能消费一次；诊断日志仅 debug 构建输出
-        // （响应体含账户余额/用量等私有数据，release 严禁写入 logcat）
-        val summaryBody = summaryResp?.takeIf { it.isSuccessful }?.body()?.string()
-        val costBody = costResp?.takeIf { it.isSuccessful }?.body()?.string()
-        val amountBody = amountResp?.takeIf { it.isSuccessful }?.body()?.string()
+        // 先读出响应体再解析：body 只能消费一次。单路读体失败（中途断连）只弃该路，
+        // 不拖垮其余两路已成功的数据与诊断码（旧实现任一路抛 IOException 会丢弃全部）。
+        // 非成功响应关闭错误体释放连接。响应体含账户私有数据，诊断日志仅 debug 输出
+        val summaryBody = readSuccessBody(summaryResp)
+        val costBody = readSuccessBody(costResp)
+        val amountBody = readSuccessBody(amountResp)
         if (BuildConfig.DEBUG) {
             android.util.Log.i(
                 "WatchDogRepo",
@@ -257,13 +274,18 @@ class DeepSeekProvider(
         )
     }
 
-    /** 合并 amount/cost 按模型×按天数据为 DailyModelUsage 列表（按 date+model 对齐）。 */
+    /**
+     * 合并 amount/cost 按模型×按天数据为 DailyModelUsage 列表（按 date+model 对齐）。
+     * 键取两侧并集：cost 端点单独失败/被拦截时其行不再凭空消失；cost 缺失记为 null
+     * （未知），不得兜底 0.00 渲染成"免费"。
+     */
     private fun buildDailyModelUsage(
         amountRows: List<DeepSeekConsoleParser.DailyModelRow>?,
         costRows: List<DeepSeekConsoleParser.DailyModelRow>?
     ): List<DailyModelUsage> {
         val costByKey = costRows?.associate { "${it.date}|${it.model}" to it.cost } ?: emptyMap()
-        val keys = (amountRows?.map { "${it.date}|${it.model}" } ?: emptyList()).distinct().sorted()
+        val keys = ((amountRows?.map { "${it.date}|${it.model}" } ?: emptyList()) +
+            (costRows?.map { "${it.date}|${it.model}" } ?: emptyList())).distinct().sorted()
         return keys.map { key ->
             val sep = key.indexOf('|')
             val date = key.substring(0, sep)
@@ -277,7 +299,7 @@ class DeepSeekProvider(
                 inputTokens = a?.inputTokens ?: 0,
                 outputTokens = a?.outputTokens ?: 0,
                 requests = a?.requests ?: 0,
-                cost = costByKey[key] ?: 0.0
+                cost = costByKey[key]
             )
         }
     }
@@ -288,7 +310,8 @@ class DeepSeekProvider(
         costDays: List<DeepSeekConsoleParser.DailyRow>?
     ): List<DailyUsage> {
         val costByDate = costDays?.associate { it.date to it.cost } ?: emptyMap()
-        val dates = (amountDays?.map { it.date } ?: emptyList()).distinct().sorted()
+        val dates = ((amountDays?.map { it.date } ?: emptyList()) +
+            (costDays?.map { it.date } ?: emptyList())).distinct().sorted()
         return dates.map { date ->
             val a = amountDays?.firstOrNull { it.date == date }
             DailyUsage(
@@ -298,7 +321,7 @@ class DeepSeekProvider(
                 inputTokens = a?.inputTokens ?: 0,
                 outputTokens = a?.outputTokens ?: 0,
                 requests = a?.requests ?: 0,
-                cost = costByDate[date] ?: 0.0
+                cost = costByDate[date]
             )
         }
     }
@@ -308,24 +331,41 @@ class DeepSeekProvider(
         costRows: List<DeepSeekConsoleParser.MonthlyRow>?,
         amountRows: List<DeepSeekConsoleParser.MonthlyRow>?
     ): List<ModelUsage> {
-        val costByModel = costRows?.associate { it.model to it.cost } ?: emptyMap()
-        val models = (costByModel.keys + (amountRows?.map { it.model } ?: emptyList())).distinct().sorted()
+        val models = ((costRows?.map { it.model } ?: emptyList()) +
+            (amountRows?.map { it.model } ?: emptyList())).distinct().sorted()
         return models.mapNotNull { model ->
             val a = amountRows?.firstOrNull { it.model == model }
+            val c = costRows?.firstOrNull { it.model == model }
             val inputTokens = (a?.promptTokens ?: 0) + (a?.cacheHit ?: 0) + (a?.cacheMiss ?: 0)
             val outputTokens = a?.outputTokens ?: 0
-            val cost = costByModel[model] ?: 0.0
-            if ((a?.requests ?: 0L) <= 0L && inputTokens + outputTokens <= 0L && cost <= 0.0) {
+            val cost = c?.cost ?: 0.0
+            // 请求数两侧都可携带（解析器两种模式都累计 REQUEST）：amount 端点单独失败
+            // 时不再把请求数显示成 0
+            val requests = a?.requests ?: c?.requests ?: 0L
+            if (requests <= 0L && inputTokens + outputTokens <= 0L && cost <= 0.0) {
                 return@mapNotNull null
             }
             ModelUsage(
                 modelName = model,
-                requestCount = a?.requests ?: 0,
+                requestCount = requests,
                 totalTokens = inputTokens + outputTokens,
                 inputTokens = inputTokens,
                 outputTokens = outputTokens,
                 cost = String.format(Locale.US, "%.2f", cost)
             )
+        }
+    }
+
+    /** 读成功响应体；读体失败（中途断连）返回 null 而不向上抛。非成功响应关闭错误体释放连接。 */
+    private fun readSuccessBody(response: retrofit2.Response<okhttp3.ResponseBody>?): String? {
+        response ?: return null
+        return try {
+            if (response.isSuccessful) response.body()?.string() else {
+                response.errorBody()?.close()
+                null
+            }
+        } catch (e: java.io.IOException) {
+            null
         }
     }
 }

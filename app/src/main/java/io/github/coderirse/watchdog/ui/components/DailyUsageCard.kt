@@ -319,7 +319,8 @@ private enum class Metric(val totalOf: (DailyModelUsage) -> Double) {
     INPUT({ it.inputTokens.toDouble() }),
     OUTPUT({ it.outputTokens.toDouble() }),
     REQUESTS({ it.requests.toDouble() }),
-    COST({ it.cost })
+    // cost 为 null 表示该日成本未知（cost 端点失败/被拦截），柱状图按 0 高度处理
+    COST({ it.cost ?: 0.0 })
 }
 
 /** 选中范围/指标下的最新（含数据）日汇总：当日指标 + 总请求数 + 总成本。 */
@@ -331,7 +332,9 @@ private fun DailySummaryRow(byDate: Map<String, List<DailyModelUsage>>, metric: 
     val last = lastDate?.let { byDate[it] } ?: emptyList()
     val totalTokens = last.sumOf { it.totalTokens }
     val requests = last.sumOf { it.requests }
-    val cost = last.sumOf { it.cost }
+    // 任一模型成本未知（cost 端点失败/被拦截）时显示占位符，不把未知渲染成 ¥0.00
+    val costUnknown = last.any { it.cost == null }
+    val cost = last.sumOf { it.cost ?: 0.0 }
     val value = last.sumOf { metric.totalOf(it) }
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -343,7 +346,10 @@ private fun DailySummaryRow(byDate: Map<String, List<DailyModelUsage>>, metric: 
             fmtValue(value, metric)
         )
         SummaryItem(stringResource(R.string.daily_usage_requests), formatCompact(requests.toLong()))
-        SummaryItem(stringResource(R.string.daily_usage_cost), String.format(Locale.US, "¥%.2f", cost))
+        SummaryItem(
+            stringResource(R.string.daily_usage_cost),
+            if (costUnknown) "—" else String.format(Locale.US, "¥%.2f", cost)
+        )
     }
 }
 
@@ -517,7 +523,9 @@ private fun SelectedDayDetail(date: String, dayUsages: List<DailyModelUsage>) {
             val input = list.sumOf { it.inputTokens }
             val output = list.sumOf { it.outputTokens }
             val requests = list.sumOf { it.requests }
-            val cost = list.sumOf { it.cost }
+            // 任一来源成本未知（cost 端点失败/被拦截）时显示占位符，不把未知渲染成 ¥0.00
+            val costUnknown = list.any { it.cost == null }
+            val cost = list.sumOf { it.cost ?: 0.0 }
             // 两行布局：模型名 + 数值分行，避免大字号下同行挤压截断
             Column(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
                 Text(
@@ -545,7 +553,7 @@ private fun SelectedDayDetail(date: String, dayUsages: List<DailyModelUsage>) {
                         text = stringResource(
                             R.string.daily_usage_day_detail_requests,
                             formatCompact(requests),
-                            String.format(Locale.US, "%.2f", cost)
+                            if (costUnknown) "—" else String.format(Locale.US, "%.2f", cost)
                         ),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant

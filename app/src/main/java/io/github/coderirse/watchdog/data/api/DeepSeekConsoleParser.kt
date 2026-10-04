@@ -134,8 +134,7 @@ object DeepSeekConsoleParser {
         for (u in usage) {
             val uo = u as? JsonObject ?: continue
             val type = uo.strOrNull("type") ?: continue
-            val amount = uo.strOrNull("amount")?.toDoubleOrNull()
-                ?: (uo.get("amount")?.takeIf { it.isJsonPrimitive }?.asDouble) ?: continue
+            val amount = amountOf(uo) ?: continue
             r = when (type) {
                 "REQUEST" -> r.copy(requests = r.requests + amount.toLong())
                 "PROMPT_TOKEN" -> if (costMode) r.copy(cost = r.cost + amount)
@@ -166,6 +165,18 @@ object DeepSeekConsoleParser {
                 )
             }
         }
+
+    /**
+     * usage 项的 amount 安全取数：数字原语直接取；字符串先归一化千分位逗号再
+     * toDoubleOrNull。绝不调用 asDouble——它对 "1,234.56"/"N/A" 等字符串原语抛
+     * NumberFormatException，会击穿本类"绝不抛异常"契约，导致整次控制台抓取失败。
+     */
+    private fun amountOf(uo: JsonObject): Double? {
+        val el = uo.get("amount")?.takeIf { it.isJsonPrimitive } ?: return null
+        val p = el.asJsonPrimitive
+        if (p.isNumber) return runCatching { p.asDouble }.getOrNull()
+        return p.asString.replace(",", "").trim().toDoubleOrNull()
+    }
 
     // ===== 按天（daily）解析：月度接口 biz_data[].days[]，含每日各指标 =====
 
@@ -207,8 +218,7 @@ object DeepSeekConsoleParser {
             for (u in usages) {
                 val uo = u as? JsonObject ?: continue
                 val type = uo.strOrNull("type") ?: continue
-                val amount = uo.strOrNull("amount")?.toDoubleOrNull()
-                    ?: (uo.get("amount")?.takeIf { it.isJsonPrimitive }?.asDouble) ?: continue
+                val amount = amountOf(uo) ?: continue
                 r = when (type) {
                     "REQUEST" -> r.copy(requests = r.requests + amount.toLong())
                     "PROMPT_TOKEN" -> if (costMode) r.copy(cost = r.cost + amount)
@@ -270,8 +280,7 @@ object DeepSeekConsoleParser {
                 for (u in usage) {
                     val uo = u as? JsonObject ?: continue
                     val type = uo.strOrNull("type") ?: continue
-                    val amount = uo.strOrNull("amount")?.toDoubleOrNull()
-                        ?: (uo.get("amount")?.takeIf { it.isJsonPrimitive }?.asDouble) ?: continue
+                    val amount = amountOf(uo) ?: continue
                     r = when (type) {
                         "REQUEST" -> r.copy(requests = r.requests + amount.toLong())
                         "PROMPT_TOKEN" -> if (costMode) r.copy(cost = r.cost + amount)

@@ -23,7 +23,8 @@ data class DailyUsage(
     val inputTokens: Long = 0,
     val outputTokens: Long = 0,
     val requests: Long = 0,
-    val cost: Double = 0.0
+    // null = 成本未知（cost 端点失败/被 WAF 拦截），UI 显示占位符而非 ¥0.00
+    val cost: Double? = null
 )
 
 /**
@@ -39,7 +40,8 @@ data class DailyModelUsage(
     val inputTokens: Long = 0,
     val outputTokens: Long = 0,
     val requests: Long = 0,
-    val cost: Double = 0.0
+    // null = 成本未知（cost 端点失败/被 WAF 拦截），UI 显示占位符而非 ¥0.00
+    val cost: Double? = null
 )
 
 /**
