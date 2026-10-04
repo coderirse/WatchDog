@@ -12,6 +12,7 @@ import io.github.coderirse.watchdog.data.model.QuotaWindow
 import io.github.coderirse.watchdog.data.repository.PlatformQuotaProvider
 import io.github.coderirse.watchdog.data.repository.ProviderSupport
 import io.github.coderirse.watchdog.util.FormatUtils
+import kotlinx.coroutines.CancellationException
 
 /**
  * 智谱 GLM：官方资源包接口（tokenAccounts/list/my，Token 计价）
@@ -36,20 +37,32 @@ class GlmProvider(
         // 叠加 Coding Plan 订阅配额（可选增强）：GLM 用户的 API Key 可能同时有
         // 按量资源包与 Coding Plan 套餐，两者独立展示。
         if (apiKey.isBlank()) return base
-        val plan = runCatching { glmCodingPlanApi.getQuotaLimit(apiKey) }.getOrNull()
-        if (plan != null && plan.isSuccessful) {
-            val planBody = plan.body()?.string()
-            val result = planBody?.let(GlmCodingPlanParser::parse)
-            if (result != null && result.success) {
+        // 请求与读体一并纳入异常边界：可选增强失败（含 body 读取中断连）不得拖垮
+        // 已成功获取的主数据；协程取消必须向上传播，不能当作错误吞掉
+        val planBody = try {
+            val resp = glmCodingPlanApi.getQuotaLimit(apiKey)
+            if (resp.isSuccessful) resp.body()?.string() else {
+                runCatching { resp.errorBody()?.close() }
+                null
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            null
+        }
+        if (planBody != null) {
+            val result = GlmCodingPlanParser.parse(planBody)
+            if (result.success) {
                 val quotaWindows = result.windows.mapNotNull { w ->
-                    val usedPercent = w.usedPercent ?: return@mapNotNull null
-                    // percentage 为已用百分比，换算 remaining/limit（limit 基准 100）
-                    val remaining = (100.0 - usedPercent).coerceIn(0.0, 100.0)
+                    // percentage 缺失不再丢弃窗口：保留名称与重置时间，
+                    // QuotaWindow 字段全可空，UI 对缺失字段已有占位展示
+                    val usedPercent = w.usedPercent
+                    val remaining = usedPercent?.let { (100.0 - it).coerceIn(0.0, 100.0) }
                     QuotaWindow(
                         name = w.name,
                         used = usedPercent,
                         remaining = remaining,
-                        limit = 100.0,
+                        limit = if (usedPercent != null) 100.0 else null,
                         resetTime = w.nextResetTime,
                         expiresAt = null
                     )
@@ -59,6 +72,10 @@ class GlmProvider(
                         planName = result.planName,
                         quotaWindows = quotaWindows,
                         boosterInfo = null,
+                        // 订阅解析成功即"拿到了可信的额度数值"（与 KimiCodeProvider 一致）：
+                        // 纯 Coding Plan 用户的资源包行数为空、base.isAvailable=false，
+                        // 原样继承会让 UI 误判为"耗尽"，与仍显示剩余的配额窗口自相矛盾
+                        isAvailable = true,
                         // 有 Coding Plan 时该卡以订阅模式展示，monthlyUsage/limit 不作为余额语义
                         currency = if (base.currency == "Tokens") "额度" else base.currency
                     )
@@ -71,9 +88,26 @@ class GlmProvider(
     /** 解析 GLM 官方资源包（按量余额）为 QuotaInfo。 */
     private fun buildResourceQuota(body: GlmTokenAccountsResponse): QuotaInfo {
         val allRows = body.rows ?: emptyList()
-        // 优先统计有效期内资源包（status=EFFECTIVE）；接口不返回 status 时不过滤
+        // 优先统计有效期内资源包（status=EFFECTIVE）。回退使用全部行仅限"接口完全不返回
+        // status"的情形；返回了 status 且全部无效（全部过期）时如实按 0 处理——
+        // 旧实现对该场景也回退，过期资源包的余额被当作可用余额展示
+        val hasStatus = allRows.any { it.status != null }
         val effectiveRows = allRows.filter { it.status == null || it.status.equals("EFFECTIVE", true) }
-        val rows = if (effectiveRows.isNotEmpty()) effectiveRows else allRows
+        val rows = when {
+            effectiveRows.isNotEmpty() -> effectiveRows
+            hasStatus -> emptyList()
+            else -> allRows
+        }
+
+        // 行存在但所有数值字段都解析失败：Gson 反射对改名字段会静默注入 null，
+        // 这是"接口结构已变更"的特征，如实报错而非渲染成"耗尽"
+        // （对照 KimiCodeProvider 对同场景的 unrecognizedResponse 处理）
+        if (allRows.isNotEmpty() && allRows.all { r ->
+                r.tokenBalance == null && r.tokensMagnitude == null && r.totalAmount == null
+            }
+        ) {
+            return ProviderSupport.unrecognizedResponse(platform)
+        }
 
         var totalRemaining = 0.0
         var totalAmount = 0.0

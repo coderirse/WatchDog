@@ -20,12 +20,16 @@ class SiliconFlowProvider(
         val apiKey = settingsStore.getApiKey(platform) ?: return QuotaInfo.notConfigured(platform)
         val resp = siliconFlowApi.getUserInfo("Bearer $apiKey")
         if (!resp.isSuccessful) return ProviderSupport.httpError(platform, resp.code())
-        val data = resp.body()?.data
-        val totalBalance = data?.totalBalance?.toDoubleOrNull() ?: 0.0
-        val availableBalance = data?.balance?.toDoubleOrNull() ?: totalBalance
+        val body = resp.body() ?: return ProviderSupport.emptyResponse(platform)
+        val data = body.data ?: return ProviderSupport.unrecognizedResponse(platform)
+        // 余额字段解析失败时如实报"无法识别"而非回退 0.00：假 0 会计入 Hero 总额并
+        // 写入趋势快照（v1.8.1 修复了 Kimi/DeepSeek 的同类问题，此处当时遗漏）
+        val totalBalance = data.totalBalance?.toDoubleOrNull()
+            ?: return ProviderSupport.unrecognizedResponse(platform)
+        val availableBalance = data.balance?.toDoubleOrNull() ?: totalBalance
         return QuotaInfo(
             platform = platform,
-            isAvailable = resp.body()?.status == true,
+            isAvailable = body.status == true,
             isConfigured = true,
             totalBalance = String.format(Locale.US, "%.2f", totalBalance),
             availableBalance = String.format(Locale.US, "%.2f", availableBalance),
