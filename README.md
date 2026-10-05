@@ -50,7 +50,7 @@
 - **包名**: `io.github.coderirse.watchdog`
 - **最低版本**: Android 7.0 (API 24)
 - **编译 SDK**: API 37
-- **单元测试**: 158 个（`./gradlew testDebugUnitTest`）
+- **单元测试**: 180 个（`./gradlew testDebugUnitTest`）
 
 ## 使用方式
 
@@ -60,6 +60,9 @@
    >
    > 📌 **v1.8.1**：与 v1.8.0 同包名，可直接覆盖安装。本次为数据准确性与界面一致性修复，
    > 主要变化见下方"v1.8.1 修复说明"。
+   >
+   > ✨ **v1.8.3**（当前版本）：同包名、同签名，可直接覆盖安装。本次为前端体验与图表渲染集中优化，
+   > 主要变化见下方"v1.8.3 更新说明"。
 2. 点击右上角 ⚙️ 设置图标进入 API Key 管理
 3. 为各平台填入 API Key：
    - DeepSeek: [获取 API Key](https://platform.deepseek.com/api_keys)
@@ -173,6 +176,56 @@
 - **平台图标关闭磁盘缓存**：避免缓存残留暴露已配置平台。
 - **登录页诊断脚本仅在 debug 构建注入**：release 下不再向用户登录页注入多余 JS。
 - **测试补齐**：新增 `DashboardViewModel` 关键分支（三态推导 / 趋势写入条件 / 刷新去重）、图表轴标签抽稀、以及**额度缓存反序列化防线**测试，共 158 个单测。
+
+## v1.8.3 更新说明
+
+本次为前端视觉与交互的集中优化，围绕"图表可读性""交互反馈""性能与可维护性"三条线。包名与签名保持不变，可直接覆盖安装。
+
+**图表：抽出共享图表模块**
+
+- 新增 `ui/components/chart/`：把此前散落在 Hero 卡与 Token 用量卡里的手写 Canvas 逻辑收敛为
+  `ChartMath`（纯 Kotlin，可 JVM 单测）/ `ChartModel` / `ChartAxis` / `BarChart` / `LineChart` / `ChartTheme`。
+- 轴标签改用 `TextMeasurer` 实测文字尺寸推导留白，系统字体放大（fontScale）时不再被裁切或重叠。
+- 绘制改用 `DrawScope.drawText`，不再每帧新建 `android.graphics.Paint`。
+- 新增 16 个 `ChartMathTest` 单测，覆盖标度单调性、0 值安全、刻度反解一致性与按天聚合去重。
+
+**Hero 余额趋势**
+
+- **同日双柱修复**：趋势快照按天聚合（同一天只保留最后一条），此前同一天的两次刷新会画成两根柱子。
+- **按点数分段渲染**：0 点不渲染图表区；1 点显示"收集中"；2–3 点用稀疏折线图（避免柱子过少时的畸形柱宽）；≥4 点用柱状图。
+- 涨跌文案按跨度区分（当日 / 跨 N 天），不再一律写成"较今日"。
+- 余额数字改为自适应字号（24sp–40sp），大额不再溢出或换行。
+
+**Token 用量柱状图**
+
+- **自动标度**：以中位数为基准识别尖峰（max/median ≥ 500 用对数、≥ 20 用平方根，否则线性），
+  Token 用量里的极端尖峰不再把其余柱子压成一条线；使用非线性标度时卡片内给出明确提示。
+- **标度可手动切换**：筛选面板新增"自动 / 线性 / 平方根 / 对数"chip。
+- **零值日折叠**：默认只展示最近 7 个非零日，可一键展开查看全部。
+
+**平台卡与对话体验**
+
+- 新增"零余额"状态：剩余额度为 0 时显示专属布局与文案，不再与"额度偏低"混用同一套展示。
+- 自定义对话框统一进出场动画（进场 160ms、退场 120ms 缩放淡出），并保证退场动画播完再执行提交 / 删除回调。
+- 设置页三处数值录入对话框抽到 `SettingsDialogs.kt`，页面文件不再堆叠弹窗代码。
+- 导航 Tab 切换与设置页推入增加过渡动画。
+
+**性能与可维护性**
+
+- 仪表盘状态流改 `collectAsStateWithLifecycle`（5 处），后台不再无谓重组。
+- Hero 卡 / 用量摘要的派生数据收敛为 data class 并 `remember` 化；图表点击 `pointerInput` 的 key 只保留数据，
+  选择态外置到 `rememberUpdatedState`，避免每次选中都重建手势。
+- 主题色收敛到 `ui/theme/Color.kt`（新增 17 个常量），删除内联硬编码颜色与死代码 `WatchDogColors`。
+- 分组标题统一为 `SectionHeader`；`MoreScreen` 的更新检查结果改密封接口 `MoreCheckResult`，
+  ViewModel 不再返回中文硬编码文案；`DashboardViewModel` 的错误信息改为 locale 中立的诊断明细。
+- 无障碍：More 页各行与下载链接补 `role = Button` 与读屏标签，图表补充可读的数值列表。
+
+**修复**
+
+- release 构建此前**实际产出未签名 APK**（`build.gradle.kts` 注释写着"回退 debug 签名"但并未设置
+  `signingConfig`），打出的包无法安装。现显式回退 debug 签名，并在配置了 `keystore.properties` 时使用正式签名。
+- 版本号递增（versionCode 19 → 20，versionName 1.8.2 → 1.8.3），避免已装同版本的设备打开 APK 时被判定为
+  "已安装"而直接打开旧 App。
 
 ## License
 

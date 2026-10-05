@@ -23,3 +23,6 @@ local.properties
 .zcode/
 .v2c/
 /out/
+
+# WorkBuddy agent workspace
+.workbuddy/

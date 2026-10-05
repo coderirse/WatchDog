@@ -28,8 +28,10 @@ android {
         applicationId = "io.github.coderirse.watchdog"
         minSdk = 24
         targetSdk = 37
-        versionCode = 19
-        versionName = "1.8.2"
+        // 每次出包必须递增 versionCode：否则已装同版本的设备打开 APK 时会被判定为"已安装"，
+        // PackageInstaller 直接打开旧 App 而不走安装/更新流程
+        versionCode = 20
+        versionName = "1.8.3"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -55,6 +57,8 @@ android {
             if (hasReleaseKeystore) {
                 signingConfig = signingConfigs.getByName("release")
             } else {
+                // 必须显式回退到 debug 签名：不设置 signingConfig 时产物是 unsigned APK，无法安装
+                signingConfig = signingConfigs.getByName("debug")
                 logger.warn("未找到 keystore.properties，release 将使用 debug 签名。发布前请参考 keystore.properties.example 配置正式签名。")
             }
         }
