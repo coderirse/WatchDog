@@ -33,7 +33,6 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -43,14 +42,19 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import io.github.coderirse.watchdog.R
 import io.github.coderirse.watchdog.ui.components.ListDivider
 import io.github.coderirse.watchdog.ui.components.ListDividerIconInset
+import io.github.coderirse.watchdog.ui.components.SectionHeader
 import io.github.coderirse.watchdog.ui.theme.WatchDogTheme
 
 private const val REPO_URL = "https://github.com/coderirse/WatchDog"
@@ -72,7 +76,7 @@ private val openSourceLibs = listOf(
 fun MoreScreen() {
     val context = LocalContext.current
     val viewModel: MoreViewModel = viewModel()
-    val state by viewModel.uiState.collectAsState()
+    val state by viewModel.uiState.collectAsStateWithLifecycle()
 
     MoreContent(
         state = state,
@@ -107,7 +111,7 @@ fun MoreContent(
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             // ===== 支持 =====
-            GroupHeader(stringResource(R.string.more_group_support))
+            SectionHeader(stringResource(R.string.more_group_support))
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column {
                     MoreRow(
@@ -128,10 +132,22 @@ fun MoreContent(
                             }
                         }
                     )
-                    if (state.checkResult.isNotEmpty()) {
+                    state.checkResult?.let { result ->
                         Column(modifier = Modifier.padding(horizontal = 16.dp)) {
                             Text(
-                                text = state.checkResult,
+                                text = when (result) {
+                                    is MoreCheckResult.Checking ->
+                                        stringResource(R.string.more_check_checking)
+                                    is MoreCheckResult.UpToDate ->
+                                        stringResource(R.string.more_check_up_to_date, result.version)
+                                    is MoreCheckResult.UpdateAvailable ->
+                                        stringResource(R.string.more_check_update_found, result.latestVersion)
+                                    is MoreCheckResult.Failed ->
+                                        stringResource(
+                                            R.string.more_check_failed,
+                                            result.reason ?: stringResource(R.string.more_check_failed_unknown)
+                                        )
+                                },
                                 style = MaterialTheme.typography.bodySmall,
                                 color = if (state.hasUpdate) MaterialTheme.colorScheme.primary
                                 else MaterialTheme.colorScheme.onSurfaceVariant
@@ -142,7 +158,11 @@ fun MoreContent(
                                     text = stringResource(R.string.more_download_update, state.latestVersion ?: ""),
                                     style = MaterialTheme.typography.labelMedium,
                                     color = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.clickable { openUrl(RELEASES_URL) }
+                                    modifier = Modifier
+                                        .clickable(onClickLabel = stringResource(R.string.more_download_update)) {
+                                            openUrl(RELEASES_URL)
+                                        }
+                                        .semantics { role = Role.Button }
                                 )
                             }
                             Spacer(modifier = Modifier.height(12.dp))
@@ -160,7 +180,7 @@ fun MoreContent(
             }
 
             // ===== 关于 =====
-            GroupHeader(stringResource(R.string.more_group_about))
+            SectionHeader(stringResource(R.string.more_group_about))
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column {
                     MoreRow(
@@ -229,17 +249,6 @@ fun MoreContent(
 }
 
 @Composable
-private fun GroupHeader(title: String) {
-    Text(
-        text = title,
-        style = MaterialTheme.typography.titleSmall,
-        color = MaterialTheme.colorScheme.primary,
-        fontWeight = FontWeight.Bold,
-        modifier = Modifier.padding(start = 4.dp, top = 4.dp)
-    )
-}
-
-@Composable
 private fun TrailingArrow() {
     Icon(
         imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
@@ -260,7 +269,15 @@ private fun MoreRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .then(if (onClick != null) Modifier.clickable { onClick() } else Modifier)
+            .then(
+                if (onClick != null) {
+                    Modifier
+                        .clickable(onClickLabel = title) { onClick() }
+                        .semantics { role = Role.Button }
+                } else {
+                    Modifier
+                }
+            )
             .padding(horizontal = 16.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -291,7 +308,7 @@ private fun MoreRow(
 @Composable
 private fun MorePreviewContent() {
     MoreContent(
-        state = MoreUiState(currentVersion = "1.0.6", checkResult = "已是最新版本 v1.0.6"),
+        state = MoreUiState(currentVersion = "1.8.3", checkResult = MoreCheckResult.UpToDate("1.8.3")),
         onCheckUpdate = {}
     )
 }

@@ -61,11 +61,12 @@ import io.github.coderirse.watchdog.ui.theme.LocalBrandOverlay
 import io.github.coderirse.watchdog.ui.theme.LocalOnBrand
 import io.github.coderirse.watchdog.ui.theme.LocalOnBrandSecondary
 import io.github.coderirse.watchdog.ui.theme.WatchDogTheme
-import io.github.coderirse.watchdog.ui.theme.balanceNumeral
+import io.github.coderirse.watchdog.ui.theme.DepletedBase
 import io.github.coderirse.watchdog.ui.theme.brandBrush
 import io.github.coderirse.watchdog.ui.theme.darkened
 import io.github.coderirse.watchdog.ui.theme.depletedBrush
 import io.github.coderirse.watchdog.ui.theme.onBrandFor
+import io.github.coderirse.watchdog.ui.theme.secondaryNumeral
 import io.github.coderirse.watchdog.ui.theme.warningBlendBrush
 import io.github.coderirse.watchdog.util.DateFormats
 import io.github.coderirse.watchdog.util.FormatUtils
@@ -165,7 +166,12 @@ private fun BrandQuotaCard(q: QuotaInfo, modifier: Modifier = Modifier) {
     // 估算平台未填初始余额时 isAvailable=false，不应视为"耗尽"
     val estimatePending = q.isEstimate && !q.isAvailable
     val depleted = !q.isAvailable && !q.isEstimate
-    val low = !depleted && !estimatePending && fraction != null && fraction < 0.2f
+    // 零余额（P1）：可用数据可信且余额恰为 0 —— 之前落在 else 分支显示"正常"药丸 +
+    // 40sp 巨大"0.00"，全卡最抢眼的信息是一个无信息量的零
+    val zeroBalance = !q.isSubscriptionMode && !estimatePending && !depleted &&
+        q.totalBalance.toDoubleOrNull() == 0.0
+    val low = !depleted && !estimatePending && !zeroBalance &&
+        fraction != null && fraction < 0.2f
 
     val brush: Brush = when {
         depleted -> depletedBrush
@@ -175,12 +181,13 @@ private fun BrandQuotaCard(q: QuotaInfo, modifier: Modifier = Modifier) {
     val statusText = when {
         estimatePending -> stringResource(R.string.status_estimate)
         depleted -> stringResource(R.string.status_depleted)
+        zeroBalance -> stringResource(R.string.status_zero_balance)
         low -> stringResource(R.string.status_low)
         else -> stringResource(R.string.status_normal)
     }
     // 文字色按渐变起始色亮度自适应：亮色系品牌（绿/橙）上改用深色文字保证 WCAG 对比度
     val baseColor = when {
-        depleted -> Color(0xFFB91C1C)
+        depleted -> DepletedBase
         low -> q.platform.visual.brandColor.darkened(0.85f)
         else -> q.platform.visual.brandColor
     }
@@ -229,6 +236,7 @@ private fun BrandQuotaCard(q: QuotaInfo, modifier: Modifier = Modifier) {
                     when {
                         q.isSubscriptionMode -> SubscriptionContent(q)
                         estimatePending -> EstimatePendingContent(q)
+                        zeroBalance -> ZeroBalanceContent(q)
                         else -> BalanceContent(q, fraction)
                     }
 
@@ -314,23 +322,12 @@ private fun BalanceContent(q: QuotaInfo, fraction: Float?) {
     val balanceLabel = if (q.platform == PlatformType.GLM)
         stringResource(R.string.quota_label_remaining_token)
     else stringResource(R.string.quota_label_total_balance)
-    val monthlyLabel = when {
-        q.platform == PlatformType.GLM -> stringResource(R.string.quota_label_total_used)
-        q.platform == PlatformType.SILICONFLOW -> stringResource(R.string.quota_label_available_balance)
-        q.isMonthlyUsageEstimated -> stringResource(R.string.quota_label_monthly_usage_estimated)
-        else -> stringResource(R.string.quota_label_monthly_usage)
-    }
-    // 硅基流动展示专用 availableBalance 字段，不再复用 monthlyUsage 造成语义错位
-    val monthlyValue = if (q.platform == PlatformType.SILICONFLOW) {
-        q.availableBalance ?: q.monthlyUsage
-    } else {
-        q.monthlyUsage
-    }
+    val (monthlyLabel, monthlyValue) = monthlyUsageParts(q)
 
     Text(balanceLabel, style = MaterialTheme.typography.labelMedium, color = onBrandSecondary)
     Spacer(modifier = Modifier.height(2.dp))
     Row(verticalAlignment = Alignment.Bottom) {
-        Text(balanceText(q), style = balanceNumeral, color = onBrand)
+        BalanceText(text = balanceText(q), color = onBrand)
         Spacer(modifier = Modifier.width(6.dp))
         Text(
             q.currency,
@@ -367,6 +364,67 @@ private fun BalanceContent(q: QuotaInfo, fraction: Float?) {
             color = onBrand
         )
     }
+}
+
+// ===== 零余额（按量付费、数据可信但余额为 0） =====
+
+/**
+ * 零余额内容：不再用 40sp 大号"0.00"抢占视觉焦点（零没有信息量），
+ * 改为 20sp 数字 + 明确的行动指引；本月用量上移为主信息。
+ * 品牌渐变保留（品牌识别不变），状态药丸已由"正常"改为"余额为 0"。
+ */
+@Composable
+private fun ZeroBalanceContent(q: QuotaInfo) {
+    val onBrand = LocalOnBrand.current
+    val onBrandSecondary = LocalOnBrandSecondary.current
+    val balanceLabel = if (q.platform == PlatformType.GLM)
+        stringResource(R.string.quota_label_remaining_token)
+    else stringResource(R.string.quota_label_total_balance)
+    val (monthlyLabel, monthlyValue) = monthlyUsageParts(q)
+
+    Text(balanceLabel, style = MaterialTheme.typography.labelMedium, color = onBrandSecondary)
+    Spacer(modifier = Modifier.height(2.dp))
+    Row(verticalAlignment = Alignment.Bottom) {
+        Text("0.00", style = secondaryNumeral, color = onBrand)
+        Spacer(modifier = Modifier.width(6.dp))
+        Text(
+            q.currency,
+            style = MaterialTheme.typography.titleSmall,
+            color = onBrandSecondary,
+            modifier = Modifier.padding(bottom = 3.dp)
+        )
+    }
+    Spacer(modifier = Modifier.height(6.dp))
+    Text(
+        stringResource(R.string.quota_zero_balance_hint),
+        style = MaterialTheme.typography.bodySmall,
+        color = onBrand
+    )
+    Spacer(modifier = Modifier.height(10.dp))
+    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+        Text(monthlyLabel, style = MaterialTheme.typography.bodySmall, color = onBrandSecondary)
+        Text(monthlyValue, style = MaterialTheme.typography.bodySmall, color = onBrand)
+    }
+}
+
+/** 本月用量行的（标签, 数值）取值逻辑，BalanceContent / ZeroBalanceContent 共用。 */
+@Composable
+private fun monthlyUsageParts(q: QuotaInfo): Pair<String, String> {
+    val monthlyLabel = when {
+        q.platform == PlatformType.GLM -> stringResource(R.string.quota_label_total_used)
+        q.platform == PlatformType.SILICONFLOW -> stringResource(R.string.quota_label_available_balance)
+        q.isMonthlyUsageEstimated -> stringResource(R.string.quota_label_monthly_usage_estimated)
+        else -> stringResource(R.string.quota_label_monthly_usage)
+    }
+    // 硅基流动展示专用 availableBalance 字段，不再复用 monthlyUsage 造成语义错位
+    val monthlyValue = if (q.platform == PlatformType.SILICONFLOW) {
+        q.availableBalance ?: q.monthlyUsage
+    } else {
+        q.monthlyUsage
+    }
+    val rendered = monthlyValue.ifBlank { stringResource(R.string.quota_value_unknown) } +
+        if (monthlyValue.isBlank()) "" else " ${q.currency}"
+    return monthlyLabel to rendered
 }
 
 // ===== 估算模式未填初始余额（火山方舟） =====

@@ -2,16 +2,13 @@ package io.github.coderirse.watchdog.ui.dashboard
 
 import android.content.res.Configuration
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -34,38 +31,35 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
-import androidx.compose.ui.geometry.CornerRadius
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.drawscope.DrawScope
-import androidx.compose.ui.graphics.drawscope.Fill
-import androidx.compose.ui.graphics.nativeCanvas
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import io.github.coderirse.watchdog.R
 import io.github.coderirse.watchdog.data.model.BalanceSnapshot
 import io.github.coderirse.watchdog.data.model.PlatformType
 import io.github.coderirse.watchdog.data.model.QuotaInfo
 import io.github.coderirse.watchdog.data.model.sumCnyBalance
+import io.github.coderirse.watchdog.ui.components.BalanceText
+import io.github.coderirse.watchdog.ui.components.chart.BarChart
+import io.github.coderirse.watchdog.ui.components.chart.ChartEntry
+import io.github.coderirse.watchdog.ui.components.chart.ChartMath
+import io.github.coderirse.watchdog.ui.components.chart.LineChart
 import io.github.coderirse.watchdog.ui.theme.WatchDogTheme
-import io.github.coderirse.watchdog.ui.theme.balanceNumeral
 import io.github.coderirse.watchdog.ui.theme.trendBarBrush
 import io.github.coderirse.watchdog.util.DateFormats
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 import kotlin.math.abs
+import kotlin.math.ceil
 
 /** 趋势图最多展示的快照条数（与 BalanceHistoryStore.MAX_ENTRIES 解耦，只取最近的）。 */
 private const val TREND_WINDOW = 30
 
-/** 图表轴标签字号（sp），Canvas 内文字不随 Compose typography 缩放，单独定义。 */
-private const val AXIS_TEXT_SP = 10f
+/** 一天毫秒数，用于判断趋势跨度是否在同一天内。 */
+private const val MILLIS_PER_DAY = 24L * 60L * 60L * 1000L
+
+/** 少于该点数时用折线图（柱状图在极少数据下会被误读为数量对比）。 */
+private const val SPARSE_POINT_LIMIT = 3
 
 /**
  * Hero 总览卡 + 余额趋势图。
@@ -87,120 +81,155 @@ fun HeroOverviewCard(
     balanceHistory: List<BalanceSnapshot>,
     modifier: Modifier = Modifier
 ) {
-    val configured = quotas.filter { it.isConfigured }
-    val abnormalCount = configured.count { it.errorMessage != null }
-    val staleCount = configured.count { it.isStale }
-    // 金额汇总：仅计按量付费且以 CNY 计价的平台；
-    // 订阅配额平台无余额概念，GLM 等以 Token 计价的平台不能混入金额求和
-    val totalBalance = quotas.sumCnyBalance()
-    val hasSubscription = configured.any { it.isSubscriptionMode }
-    val estimateCount = configured.count { it.isEstimate }
-    // 取最早的数据时间而非最新：给出"数据新鲜度下界"，
-    // 避免某平台仍在用两天前的缓存、Hero 却显示"刚刚更新"的错觉
-    val oldestDataTime = configured.minOfOrNull { it.lastUpdated }
-
-    Card(
-        modifier = modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .border(
-                    width = 1.dp,
-                    color = MaterialTheme.colorScheme.outlineVariant,
-                    shape = MaterialTheme.shapes.medium
-                )
-                .clip(MaterialTheme.shapes.medium)
-                .background(MaterialTheme.colorScheme.surface)
+    // 派生统计全部 remember(quotas)：此前每次重组（含 LazyColumn 滚动）都重算
+    val derived = remember(quotas) {
+        val configured = quotas.filter { it.isConfigured }
+        HeroStats(
+            configuredCount = configured.size,
+            abnormalCount = configured.count { it.errorMessage != null },
+            staleCount = configured.count { it.isStale },
+            totalBalance = quotas.sumCnyBalance(),
+            hasSubscription = configured.any { it.isSubscriptionMode },
+            estimateCount = configured.count { it.isEstimate },
+            oldestDataTime = configured.minOfOrNull { it.lastUpdated }
+        )
+    }
+    with(derived) {
+        Card(
+            modifier = modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
         ) {
-            Column(modifier = Modifier.padding(20.dp)) {
-                Text(
-                    stringResource(R.string.hero_total_balance),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Spacer(modifier = Modifier.height(2.dp))
-                Row(verticalAlignment = Alignment.Bottom) {
-                    Text(
-                        text = String.format(Locale.US, "%.2f", totalBalance),
-                        style = balanceNumeral,
-                        color = MaterialTheme.colorScheme.onSurface
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .border(
+                        width = 1.dp,
+                        color = MaterialTheme.colorScheme.outlineVariant,
+                        shape = MaterialTheme.shapes.medium
                     )
-                    Spacer(modifier = Modifier.width(6.dp))
+                    .clip(MaterialTheme.shapes.medium)
+                    .background(MaterialTheme.colorScheme.surface)
+            ) {
+                Column(modifier = Modifier.padding(20.dp)) {
                     Text(
-                        text = "CNY",
-                        style = MaterialTheme.typography.titleSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(bottom = 6.dp)
-                    )
-                }
-                if (hasSubscription || estimateCount > 0) {
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = listOfNotNull(
-                            stringResource(R.string.hero_subscription_excluded)
-                                .takeIf { hasSubscription },
-                            stringResource(R.string.hero_estimate_included, estimateCount)
-                                .takeIf { estimateCount > 0 }
-                        ).joinToString(" · "),
-                        style = MaterialTheme.typography.labelSmall,
+                        stringResource(R.string.hero_total_balance),
+                        style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                }
-                Spacer(modifier = Modifier.height(12.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        stringResource(
-                            R.string.hero_platform_stats,
-                            configured.size, quotas.size,
-                            if (abnormalCount == 0) stringResource(R.string.hero_status_all_normal)
-                            else stringResource(R.string.hero_status_abnormal, abnormalCount)
-                        ),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    if (oldestDataTime != null) {
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Row(verticalAlignment = Alignment.Bottom) {
+                        BalanceText(
+                            text = String.format(Locale.US, "%.2f", totalBalance),
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
                         Text(
-                            stringResource(R.string.hero_data_time, DateFormats.clock(oldestDataTime)),
+                            text = "CNY",
+                            style = MaterialTheme.typography.titleSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(bottom = 6.dp)
+                        )
+                    }
+                    if (hasSubscription || estimateCount > 0) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = listOfNotNull(
+                                stringResource(R.string.hero_subscription_excluded)
+                                    .takeIf { hasSubscription },
+                                stringResource(R.string.hero_estimate_included, estimateCount)
+                                    .takeIf { estimateCount > 0 }
+                            ).joinToString(" · "),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
-                }
-                if (staleCount > 0) {
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Text(
-                        stringResource(R.string.hero_stale_count, staleCount),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.tertiary
-                    )
-                }
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            stringResource(
+                                R.string.hero_platform_stats,
+                                configuredCount, quotas.size,
+                                if (abnormalCount == 0) stringResource(R.string.hero_status_all_normal)
+                                else stringResource(R.string.hero_status_abnormal, abnormalCount)
+                            ),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        if (oldestDataTime != null) {
+                            Text(
+                                stringResource(R.string.hero_data_time, DateFormats.clock(oldestDataTime)),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                    if (staleCount > 0) {
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            stringResource(R.string.hero_stale_count, staleCount),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.tertiary
+                        )
+                    }
 
-                BalanceTrendSection(balanceHistory)
+                    BalanceTrendSection(balanceHistory)
+                }
             }
         }
     }
 }
 
+/** Hero 卡的派生统计（[HeroOverviewCard] 内 remember 缓存）。 */
+private data class HeroStats(
+    val configuredCount: Int,
+    val abnormalCount: Int,
+    val staleCount: Int,
+    val totalBalance: Double,
+    val hasSubscription: Boolean,
+    val estimateCount: Int,
+    val oldestDataTime: Long?
+)
+
 /**
- * 余额趋势区（Hero 卡内）。历史不足 2 点时整块隐藏，避免出现无意义的单柱图。
- * 头部一行展示区间涨跌，右侧按钮折叠/展开图表，默认展开。
+ * 余额趋势区（Hero 卡内）。
+ *
+ * 分段渲染（修复截图问题：短时间内多次刷新产生同日多快照，出现"两根 10-05 的柱子"）：
+ * - 快照先按自然日聚合（同日保留最后一条，[ChartMath.aggregateByDay]）；
+ * - 0 天 → 整块隐藏；1 天 → 文案提示趋势收集中（单点画柱无意义）；
+ * - 2–3 天 → [LineChart]（折线 + 每点数值，避免"柱子高低 = 数量对比"的误读）；
+ * - ≥4 天 → [BarChart]（相对区间柱状图，最多 30 点）。
  */
 @Composable
 private fun BalanceTrendSection(history: List<BalanceSnapshot>) {
-    if (history.size < 2) return
+    val window = remember(history) { history.takeLast(TREND_WINDOW) }
+    val daily = remember(window) {
+        ChartMath.aggregateByDay(window.map { it.timestamp to it.balance })
+    }
+    if (daily.isEmpty()) return
 
     var expanded by remember { mutableStateOf(true) }
-    val window = remember(history) { history.takeLast(TREND_WINDOW) }
-    var selectedIndex by remember(window) { mutableStateOf<Int?>(null) }
+    var selectedIndex by remember(daily) { mutableStateOf<Int?>(null) }
 
-    val delta = window.last().balance - window.first().balance
+    // 涨跌与跨度：按天聚合后的首末点，跨度 ≤1 天用"今日"文案，
+    // 避免"两根同日柱 + 区间 +6.33"暗示一个不存在的长周期
+    val delta = daily.last().second - daily.first().second
+    val spanDays = remember(window) {
+        val first = window.minOf { it.timestamp }
+        val last = window.maxOf { it.timestamp }
+        ceil((last - first) / MILLIS_PER_DAY.toDouble()).toLong().coerceAtLeast(1)
+    }
+    val sign = if (delta >= 0) "+" else "-"
+    val amount = String.format(Locale.US, "%.2f", abs(delta))
+    val deltaText = if (spanDays <= 1) {
+        stringResource(R.string.hero_trend_delta_today, sign, amount)
+    } else {
+        stringResource(R.string.hero_trend_delta_days, spanDays, sign, amount)
+    }
 
     Spacer(modifier = Modifier.height(14.dp))
     Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -211,11 +240,7 @@ private fun BalanceTrendSection(history: List<BalanceSnapshot>) {
             modifier = Modifier.weight(1f)
         )
         Text(
-            text = stringResource(
-                R.string.hero_trend_delta,
-                if (delta >= 0) "+" else "-",
-                String.format(Locale.US, "%.2f", abs(delta))
-            ),
+            text = deltaText,
             style = MaterialTheme.typography.labelMedium,
             color = if (delta >= 0) {
                 MaterialTheme.colorScheme.onSurface
@@ -223,47 +248,102 @@ private fun BalanceTrendSection(history: List<BalanceSnapshot>) {
                 MaterialTheme.colorScheme.error
             }
         )
-        TextButton(onClick = { expanded = !expanded }) {
-            Text(
-                text = stringResource(
-                    if (expanded) R.string.hero_trend_collapse else R.string.hero_trend_expand
-                ),
-                style = MaterialTheme.typography.labelSmall
-            )
-            val rotation by animateFloatAsState(if (expanded) 180f else 0f, label = "trend-toggle")
-            Icon(
-                imageVector = Icons.Filled.KeyboardArrowDown,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(18.dp).rotate(rotation)
-            )
+        if (daily.size >= 2) {
+            TextButton(onClick = { expanded = !expanded }) {
+                Text(
+                    text = stringResource(
+                        if (expanded) R.string.hero_trend_collapse else R.string.hero_trend_expand
+                    ),
+                    style = MaterialTheme.typography.labelSmall
+                )
+                val rotation by animateFloatAsState(if (expanded) 180f else 0f, label = "trend-toggle")
+                Icon(
+                    imageVector = Icons.Filled.KeyboardArrowDown,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(18.dp).rotate(rotation)
+                )
+            }
         }
+    }
+
+    // 单点：没有可绘制的趋势，只提示正在积累
+    if (daily.size == 1) {
+        Spacer(modifier = Modifier.height(6.dp))
+        Text(
+            text = stringResource(
+                R.string.hero_trend_collecting,
+                daily.first().first,
+                String.format(Locale.US, "%.2f", daily.first().second)
+            ),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(modifier = Modifier.height(2.dp))
+        Text(
+            text = stringResource(R.string.hero_trend_hint_sparse),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.outline
+        )
+        return
     }
 
     if (!expanded) return
 
-    BalanceTrendChart(
-        snapshots = window,
-        selectedIndex = selectedIndex,
-        onSelect = { selectedIndex = it },
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(132.dp)
+    val entries = remember(daily) {
+        val withYear = DateFormats.spansMultipleYears(daily.map { it.first })
+        daily.map { (date, balance) ->
+            ChartEntry(key = date, value = balance, axisLabel = DateFormats.axisLabel(date, withYear))
+        }
+    }
+    val isSparse = entries.size <= SPARSE_POINT_LIMIT
+    val summary = stringResource(
+        if (isSparse) R.string.hero_trend_a11y_line else R.string.hero_trend_a11y,
+        entries.size,
+        String.format(Locale.US, "%.2f", daily.minOf { it.second }),
+        String.format(Locale.US, "%.2f", daily.maxOf { it.second })
     )
 
-    val detail = selectedIndex?.let { window.getOrNull(it) } ?: window.last()
+    if (isSparse) {
+        LineChart(
+            entries = entries,
+            selectedIndex = selectedIndex,
+            onSelectIndex = { selectedIndex = it },
+            valueLabel = { String.format(Locale.US, "%.2f", it) },
+            contentDescription = summary,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(132.dp)
+        )
+    } else {
+        BarChart(
+            entries = entries,
+            selectedIndex = selectedIndex,
+            onSelectIndex = { selectedIndex = it },
+            relativeRange = true,
+            minBarFraction = 0.15f,
+            barBrush = { trendBarBrush(it) },
+            valueLabel = { String.format(Locale.US, "%.2f", it) },
+            contentDescription = summary,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(132.dp)
+        )
+    }
+
+    val detail = selectedIndex?.let { daily.getOrNull(it) } ?: daily.last()
     Spacer(modifier = Modifier.height(4.dp))
     Text(
         text = if (selectedIndex != null) {
             stringResource(
                 R.string.hero_trend_point_selected,
-                DateFormats.fullDate(detail.timestamp),
-                String.format(Locale.US, "%.2f", detail.balance)
+                detail.first,
+                String.format(Locale.US, "%.2f", detail.second)
             )
         } else {
             stringResource(
                 R.string.hero_trend_latest,
-                String.format(Locale.US, "%.2f", detail.balance)
+                String.format(Locale.US, "%.2f", detail.second)
             )
         },
         style = MaterialTheme.typography.labelSmall,
@@ -271,171 +351,13 @@ private fun BalanceTrendSection(history: List<BalanceSnapshot>) {
     )
     Spacer(modifier = Modifier.height(2.dp))
     Text(
-        text = stringResource(R.string.hero_trend_hint),
+        text = stringResource(
+            if (isSparse) R.string.hero_trend_hint_sparse else R.string.hero_trend_hint
+        ),
         style = MaterialTheme.typography.labelSmall,
         color = MaterialTheme.colorScheme.outline
     )
 }
-
-/** Canvas 柱状趋势图：X 轴按快照顺序，Y 轴为余额；点击柱子查看该时间点余额。 */
-@Composable
-private fun BalanceTrendChart(
-    snapshots: List<BalanceSnapshot>,
-    selectedIndex: Int?,
-    onSelect: (Int?) -> Unit,
-    modifier: Modifier = Modifier
-) {
-    val barColor = MaterialTheme.colorScheme.primary
-    val selectedColor = MaterialTheme.colorScheme.tertiary
-    val referenceLineColor = MaterialTheme.colorScheme.outlineVariant
-    val axisColor = MaterialTheme.colorScheme.onSurfaceVariant
-
-    val values = snapshots.map { it.balance }
-    val maxV = values.maxOrNull() ?: 0.0
-    val minV = values.minOrNull() ?: 0.0
-    // 柱高按"相对区间"而非"相对 0"：否则余额在高位运行时所有柱子几乎等高，看不出波动
-    val range = (maxV - minV).coerceAtLeast(0.01)
-
-    // 轴标签与测量：文字宽度用于抽稀，必须在 Composable 侧用 px 字号测量
-    val density = androidx.compose.ui.platform.LocalDensity.current
-    val axisTextPx = with(density) { AXIS_TEXT_SP.sp.toPx() }
-    val labels = remember(snapshots) {
-        val iso = snapshots.map { isoDateOf(it.timestamp) }
-        val withYear = DateFormats.spansMultipleYears(iso)
-        iso.map { DateFormats.axisLabel(it, withYear) }
-    }
-    val labelWidths = remember(labels, axisTextPx) { labels.map { measureText(it, axisTextPx) } }
-
-    val summary = stringResource(
-        R.string.hero_trend_a11y,
-        snapshots.size,
-        String.format(Locale.US, "%.2f", minV),
-        String.format(Locale.US, "%.2f", maxV)
-    )
-
-    Box(
-        modifier = modifier
-            .semantics { contentDescription = summary }
-            .pointerInput(snapshots, selectedIndex) {
-                detectTapGestures { offset ->
-                    val left = 4.dp.toPx()
-                    val chartW = size.width - left * 2
-                    val slot = if (snapshots.isEmpty()) 0f else chartW / snapshots.size
-                    if (slot <= 0f) return@detectTapGestures
-                    val idx = ((offset.x - left) / slot).toInt()
-                    if (idx in snapshots.indices) {
-                        onSelect(if (idx == selectedIndex) null else idx)
-                    }
-                }
-            }
-    ) {
-        Canvas(modifier = Modifier.fillMaxSize()) {
-            val left = 4.dp.toPx()
-            val right = 4.dp.toPx()
-            val top = 8.dp.toPx()
-            val bottom = 18.dp.toPx()
-            val chartW = size.width - left - right
-            val chartH = size.height - top - bottom
-            val slot = if (snapshots.isEmpty()) 0f else chartW / snapshots.size
-            val corner = 3.dp.toPx()
-
-            // 基线 + 中线：给柱高一个读数参照（原图完全没有参考线）
-            listOf(0f, 0.5f, 1f).forEach { fraction ->
-                val y = top + chartH * fraction
-                drawLine(
-                    color = referenceLineColor.copy(alpha = 0.7f),
-                    start = Offset(left, y),
-                    end = Offset(left + chartW, y),
-                    strokeWidth = 1f
-                )
-            }
-
-            values.forEachIndexed { i, v ->
-                val norm = ((v - minV) / range).toFloat().coerceIn(0f, 1f)
-                val h = chartH * (0.15f + 0.85f * norm)
-                val xLeft = left + slot * i + slot * 0.22f
-                val barW = (slot * 0.56f).coerceAtLeast(1.5f)
-                val yTop = top + (chartH - h)
-                if (i == selectedIndex) {
-                    drawRoundRect(
-                        color = selectedColor,
-                        topLeft = Offset(xLeft, yTop),
-                        size = Size(barW, h),
-                        cornerRadius = CornerRadius(corner, corner),
-                        style = Fill
-                    )
-                } else {
-                    drawRoundRect(
-                        brush = trendBarBrush(barColor),
-                        topLeft = Offset(xLeft, yTop),
-                        size = Size(barW, h),
-                        cornerRadius = CornerRadius(corner, corner),
-                        style = Fill
-                    )
-                }
-            }
-
-            // 上限值标注（左上角）
-            drawAxisText(
-                text = String.format(Locale.US, "%.2f", maxV),
-                x = left,
-                y = top + 9.dp.toPx(),
-                color = axisColor,
-                textPx = axisTextPx
-            )
-
-            // 日期轴：按实测文字宽度抽稀（修复旧实现固定步长导致的标签叠印）
-            if (labels.isNotEmpty()) {
-                val keep = DateFormats.thinLabelIndices(
-                    labels = labels,
-                    slotPx = slot,
-                    measure = { index -> labelWidths[index] },
-                    minGapPx = 8.dp.toPx()
-                )
-                keep.forEach { i ->
-                    val width = labelWidths[i]
-                    val x = (left + slot * i + (slot - width) / 2f)
-                        .coerceIn(left, (size.width - width - left).coerceAtLeast(left))
-                    drawAxisText(
-                        text = labels[i],
-                        x = x,
-                        y = size.height - 5.dp.toPx(),
-                        color = axisColor,
-                        textPx = axisTextPx
-                    )
-                }
-            }
-        }
-    }
-}
-
-/** Canvas 文字绘制（字号已按 density 换算为 px）。 */
-private fun DrawScope.drawAxisText(
-    text: String,
-    x: Float,
-    y: Float,
-    color: Color,
-    textPx: Float
-) {
-    drawContext.canvas.nativeCanvas.drawText(text, x, y, buildAxisPaint(color, textPx))
-}
-
-private fun buildAxisPaint(color: Color, textPx: Float) = android.graphics.Paint().apply {
-    this.color = android.graphics.Color.argb(
-        (color.alpha * 255).toInt(),
-        (color.red * 255).toInt(),
-        (color.green * 255).toInt(),
-        (color.blue * 255).toInt()
-    )
-    textSize = textPx
-    isAntiAlias = true
-}
-
-private fun measureText(text: String, textPx: Float): Float =
-    buildAxisPaint(Color.Black, textPx).measureText(text)
-
-/** 时间戳 → 本地日期 `yyyy-MM-dd`（与每日用量数据的日期字符串同构，便于统一抽稀）。 */
-private fun isoDateOf(timestamp: Long): String = DateFormats.fullDate(timestamp)
 
 // ===== Preview =====
 
@@ -443,6 +365,33 @@ private val previewSnapshots = (0 until 24).map { i ->
     BalanceSnapshot(
         timestamp = System.currentTimeMillis() - TimeUnit.DAYS.toMillis((23 - i).toLong()),
         balance = 40.0 + (i % 7) * 2.5
+    )
+}
+
+/** 单点：趋势刚起步（展示"收集中"文案）。 */
+private val previewSingleSnapshot = listOf(
+    BalanceSnapshot(timestamp = System.currentTimeMillis(), balance = 6.33)
+)
+
+/** 两点同日：此前会画出两根同日柱，现在聚合为 1 天。 */
+private val previewSameDaySnapshots = listOf(
+    BalanceSnapshot(timestamp = System.currentTimeMillis() - TimeUnit.HOURS.toMillis(3), balance = 3.0),
+    BalanceSnapshot(timestamp = System.currentTimeMillis(), balance = 6.33)
+)
+
+/** 3 天稀疏趋势（折线图分支）。 */
+private val previewSparseSnapshots = (0 until 3).map { i ->
+    BalanceSnapshot(
+        timestamp = System.currentTimeMillis() - TimeUnit.DAYS.toMillis((2 - i).toLong()),
+        balance = 2.0 + i * 2.16
+    )
+}
+
+/** 5 天趋势（柱状图分支的最少数据）。 */
+private val previewFiveDaySnapshots = (0 until 5).map { i ->
+    BalanceSnapshot(
+        timestamp = System.currentTimeMillis() - TimeUnit.DAYS.toMillis((4 - i).toLong()),
+        balance = 3.0 + (i % 3) * 1.5
     )
 }
 
@@ -478,6 +427,46 @@ private fun HeroOverviewCardPreviewDark() {
     WatchDogTheme {
         Box(modifier = Modifier.padding(16.dp)) {
             HeroOverviewCard(quotas = previewHeroQuotas, balanceHistory = previewSnapshots)
+        }
+    }
+}
+
+@Preview(name = "趋势-单点收集中", showBackground = true)
+@Composable
+private fun HeroTrendSinglePointPreview() {
+    WatchDogTheme {
+        Box(modifier = Modifier.padding(16.dp)) {
+            HeroOverviewCard(quotas = previewHeroQuotas, balanceHistory = previewSingleSnapshot)
+        }
+    }
+}
+
+@Preview(name = "趋势-同日两点聚合", showBackground = true)
+@Composable
+private fun HeroTrendSameDayPreview() {
+    WatchDogTheme {
+        Box(modifier = Modifier.padding(16.dp)) {
+            HeroOverviewCard(quotas = previewHeroQuotas, balanceHistory = previewSameDaySnapshots)
+        }
+    }
+}
+
+@Preview(name = "趋势-3天折线", showBackground = true)
+@Composable
+private fun HeroTrendSparseLinePreview() {
+    WatchDogTheme {
+        Box(modifier = Modifier.padding(16.dp)) {
+            HeroOverviewCard(quotas = previewHeroQuotas, balanceHistory = previewSparseSnapshots)
+        }
+    }
+}
+
+@Preview(name = "趋势-5天柱状", showBackground = true)
+@Composable
+private fun HeroTrendFiveDayBarPreview() {
+    WatchDogTheme {
+        Box(modifier = Modifier.padding(16.dp)) {
+            HeroOverviewCard(quotas = previewHeroQuotas, balanceHistory = previewFiveDaySnapshots)
         }
     }
 }

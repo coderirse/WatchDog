@@ -97,9 +97,11 @@ class DashboardViewModel(
                     failedPlatforms.isNotEmpty() && failedPlatforms.size < configuredQuotas.size ->
                         QuotaState.PartialSuccess(quotas, failedPlatforms)
                     configuredQuotas.isNotEmpty() && failedPlatforms.size == configuredQuotas.size ->
+                        // Error.message 只承载 locale 中立的诊断明细（平台名：原因），
+                        // 面向用户的文案由 UI 层组装（避免 VM 硬编码中文、不可本地化）
                         QuotaState.Error(
-                            "所有已配置平台查询失败：" + configuredQuotas.joinToString("；") {
-                                "${it.platform.displayName}：${it.errorMessage ?: "未知错误"}"
+                            configuredQuotas.joinToString("；") {
+                                "${it.platform.displayName}：${it.errorMessage ?: "—"}"
                             }
                         )
                     else -> QuotaState.Success(quotas)
@@ -108,9 +110,7 @@ class DashboardViewModel(
                 throw e // 协程取消向上传播
             } catch (e: Exception) {
                 _isOffline.value = false
-                _quotaState.value = QuotaState.Error(
-                    e.localizedMessage ?: "网络请求失败，请检查网络连接"
-                )
+                _quotaState.value = QuotaState.Error(e.localizedMessage ?: "")
             } finally {
                 _isRefreshing.value = false
             }

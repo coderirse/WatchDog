@@ -27,6 +27,7 @@
     <string name="dashboard_empty_action">去配置</string>
     <string name="topbar_settings_content_desc">打开设置</string>
     <string name="dashboard_error_retry">重试</string>
+    <string name="dashboard_error_network">网络请求失败，请检查网络连接</string>
     <string name="dashboard_pending_platforms">还有 %1$d 个平台可接入 · 点击去配置</string>
     <string name="hero_total_balance">总余额</string>
     <string name="hero_subscription_excluded">订阅配额平台不计入金额汇总</string>
@@ -38,12 +39,17 @@
     <string name="hero_stale_count">%1$d 个平台显示的是缓存数据</string>
     <string name="hero_trend_title">余额趋势</string>
     <string name="hero_trend_delta">区间 %1$s%2$s CNY</string>
+    <string name="hero_trend_delta_today">今日 %1$s%2$s CNY</string>
+    <string name="hero_trend_delta_days">近 %1$d 天 %2$s%3$s CNY</string>
     <string name="hero_trend_expand">展开</string>
     <string name="hero_trend_collapse">收起</string>
     <string name="hero_trend_latest">最新 %1$s CNY</string>
     <string name="hero_trend_point_selected">%1$s · %2$s CNY</string>
     <string name="hero_trend_hint">柱高按区间相对值绘制，点击柱子查看该时间点余额</string>
+    <string name="hero_trend_collecting">已记录首个采样点（%1$s · %2$s CNY），随使用自动累积趋势</string>
+    <string name="hero_trend_hint_sparse">趋势正在收集中，积累几天数据后将展示完整趋势图</string>
     <string name="hero_trend_a11y">余额趋势柱状图，共 %1$d 个采样点，最低 %2$s，最高 %3$s CNY</string>
+    <string name="hero_trend_a11y_line">余额趋势折线图，共 %1$d 个采样点，最低 %2$s，最高 %3$s CNY</string>
 
     <!-- Token 用量统计 -->
     <string name="daily_usage_title">Token 用量统计</string>
@@ -64,6 +70,13 @@
     <string name="daily_usage_source">来源</string>
     <string name="daily_usage_metric">指标</string>
     <string name="daily_usage_range">范围</string>
+    <string name="daily_usage_scale">标度</string>
+    <string name="daily_usage_scale_auto">自动</string>
+    <string name="daily_usage_scale_linear">线性</string>
+    <string name="daily_usage_scale_sqrt">平方根</string>
+    <string name="daily_usage_scale_log">对数</string>
+    <string name="daily_usage_scale_hint_sqrt">纵轴为平方根标度，柱子高度非线性，仅用于对比相对大小</string>
+    <string name="daily_usage_scale_hint_log">纵轴为对数标度，柱子高度非线性，仅用于对比相对大小</string>
     <string name="daily_usage_filters_show">筛选</string>
     <string name="daily_usage_filters_hide">收起筛选</string>
     <string name="daily_usage_filters_default">全部来源 · 全部模型 · 总Tokens · 全部时间</string>
@@ -74,11 +87,15 @@
     <string name="daily_usage_day_detail_requests">%1$s 次 · ¥%2$s</string>
     <string name="daily_usage_a11y_list_title">逐日数值</string>
     <string name="daily_usage_a11y_show_all">显示全部 %1$d 天</string>
+    <string name="daily_usage_a11y_show_nonzero_only">只看有数据的天</string>
+    <string name="daily_usage_zero_days_all">所选范围内没有非零数据</string>
 
     <!-- 额度卡片 -->
     <string name="status_normal">正常</string>
     <string name="status_low">偏低</string>
     <string name="status_depleted">耗尽</string>
+    <string name="status_zero_balance">余额为 0</string>
+    <string name="quota_zero_balance_hint">账户余额为 0，充值后自动恢复监控</string>
     <string name="status_not_configured">未配置</string>
     <string name="status_error">异常</string>
     <string name="status_cached">缓存</string>
@@ -177,6 +194,7 @@
 
     <!-- API Key 弹窗 -->
     <string name="apikey_dialog_title">配置 %1$s API Key</string>
+    <string name="apikey_dialog_key_label">API Key</string>
     <string name="apikey_dialog_desc">请输入%1$s的API Key，它将安全地保存在本地。</string>
     <string name="apikey_dialog_placeholder">sk-xxxxxxxxxxxxxxxx</string>
     <string name="apikey_dialog_current">当前已配置API Key</string>
@@ -220,6 +238,11 @@
     <string name="more_check_update">检查更新</string>
     <string name="more_current_version">当前版本 v%1$s</string>
     <string name="more_check_action">检查</string>
+    <string name="more_check_checking">正在检查…</string>
+    <string name="more_check_up_to_date">已是最新版本 v%1$s</string>
+    <string name="more_check_update_found">发现新版本 v%1$s，请前往 GitHub 下载</string>
+    <string name="more_check_failed">检查失败: %1$s</string>
+    <string name="more_check_failed_unknown">网络错误</string>
     <string name="more_download_update">点击前往 GitHub 下载 v%1$s</string>
     <string name="more_github_repo">GitHub 仓库</string>
     <string name="more_github_subtitle">github.com/coderirse/WatchDog</string>

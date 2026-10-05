@@ -43,8 +43,8 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -56,11 +56,11 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import io.github.coderirse.watchdog.R
 import io.github.coderirse.watchdog.di.LocalAppContainer
 import io.github.coderirse.watchdog.data.model.BalanceSnapshot
-import io.github.coderirse.watchdog.data.model.DailyModelUsage
 import io.github.coderirse.watchdog.data.model.PlatformType
 import io.github.coderirse.watchdog.data.model.QuotaInfo
 import io.github.coderirse.watchdog.data.model.QuotaState
@@ -76,11 +76,12 @@ fun DashboardScreen(
 ) {
     val appContainer = LocalAppContainer.current
     val viewModel: DashboardViewModel = viewModel(factory = DashboardViewModel.factory(appContainer))
-    val quotaState by viewModel.quotaState.collectAsState()
-    val isRefreshing by viewModel.isRefreshing.collectAsState()
-    val isOffline by viewModel.isOffline.collectAsState()
-    val autoRefreshInterval by viewModel.autoRefreshInterval.collectAsState()
-    val balanceHistory by viewModel.balanceHistory.collectAsState()
+    // collectAsStateWithLifecycle：后台时停止收集，避免无谓重组（依赖已引入但此前未用）
+    val quotaState by viewModel.quotaState.collectAsStateWithLifecycle()
+    val isRefreshing by viewModel.isRefreshing.collectAsStateWithLifecycle()
+    val isOffline by viewModel.isOffline.collectAsStateWithLifecycle()
+    val autoRefreshInterval by viewModel.autoRefreshInterval.collectAsStateWithLifecycle()
+    val balanceHistory by viewModel.balanceHistory.collectAsStateWithLifecycle()
     val lifecycleOwner = LocalLifecycleOwner.current
     val context = LocalContext.current
 
@@ -179,21 +180,19 @@ fun DashboardContent(
         ) {
             when (val state = quotaState) {
                 is QuotaState.Loading -> DashboardSkeleton()
-                // Success 与 PartialSuccess 的渲染完全一致（失败平台由各自卡片呈现），合并分支
-                is QuotaState.Success -> QuotaListOrEmpty(
+                // Success 与 PartialSuccess 渲染完全一致（失败平台由各自卡片呈现），共用 QuotaList
+                is QuotaState.Success -> QuotaList(
                     quotas = state.quotas,
                     autoRefreshInterval = autoRefreshInterval,
                     showOfflineBanner = isOffline,
-                    dailyModelUsage = state.quotas.flatMap { it.dailyModelUsage },
                     balanceHistory = balanceHistory,
                     onNavigateToSettings = onNavigateToSettings,
                     onRelogin = onRelogin
                 )
-                is QuotaState.PartialSuccess -> QuotaListOrEmpty(
+                is QuotaState.PartialSuccess -> QuotaList(
                     quotas = state.quotas,
                     autoRefreshInterval = autoRefreshInterval,
                     showOfflineBanner = isOffline,
-                    dailyModelUsage = state.quotas.flatMap { it.dailyModelUsage },
                     balanceHistory = balanceHistory,
                     onNavigateToSettings = onNavigateToSettings,
                     onRelogin = onRelogin
@@ -207,11 +206,10 @@ fun DashboardContent(
 // ===== 列表 / 空状态 =====
 
 @Composable
-private fun QuotaListOrEmpty(
+private fun QuotaList(
     quotas: List<QuotaInfo>,
     autoRefreshInterval: Int,
     showOfflineBanner: Boolean,
-    dailyModelUsage: List<DailyModelUsage>,
     balanceHistory: List<BalanceSnapshot>,
     onNavigateToSettings: () -> Unit,
     onRelogin: (PlatformType) -> Unit = {}
@@ -222,6 +220,7 @@ private fun QuotaListOrEmpty(
     }
     val configuredQuotas = quotas.filter { it.isConfigured }
     val pendingCount = quotas.size - configuredQuotas.size
+    val dailyModelUsage = remember(quotas) { quotas.flatMap { it.dailyModelUsage } }
 
     LazyColumn(
         contentPadding = PaddingValues(16.dp),
@@ -358,7 +357,8 @@ private fun ErrorContent(message: String, onRetry: () -> Unit) {
             )
             Spacer(modifier = Modifier.height(12.dp))
             Text(
-                text = message,
+                // message 为 VM 透出的诊断明细（平台名：原因）；空时回退到通用网络错误文案
+                text = message.ifBlank { stringResource(R.string.dashboard_error_network) },
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.error,
                 textAlign = TextAlign.Center

@@ -17,55 +17,55 @@ import androidx.compose.ui.unit.dp
 private val LightColorScheme = lightColorScheme(
     primary = BrandIndigo,
     onPrimary = Color.White,
-    primaryContainer = Color(0xFFDBE4FF),
+    primaryContainer = LightPrimaryContainer,
     onPrimaryContainer = BrandIndigo,
     secondary = SlateGrey,
     onSecondary = Color.White,
-    secondaryContainer = Color(0xFFE2E8F0),
+    secondaryContainer = LightSecondaryContainer,
     onSecondaryContainer = LightTextPrimary,
     tertiary = SuccessGreen,
     onTertiary = Color.White,
-    tertiaryContainer = Color(0xFFD1FAE5),
-    onTertiaryContainer = Color(0xFF065F46),
+    tertiaryContainer = LightTertiaryContainer,
+    onTertiaryContainer = LightOnTertiaryContainer,
     background = LightBackground,
     onBackground = LightTextPrimary,
     surface = LightSurface,
     onSurface = LightTextPrimary,
     surfaceVariant = LightSurfaceVariant,
     onSurfaceVariant = LightTextSecondary,
-    outline = Color(0xFFCBD5E1),
-    outlineVariant = Color(0xFFE2E8F0),
+    outline = LightOutline,
+    outlineVariant = LightOutlineVariant,
     error = ErrorRed,
     onError = Color.White,
-    errorContainer = Color(0xFFFEE2E2),
-    onErrorContainer = Color(0xFF991B1B)
+    errorContainer = LightErrorContainer,
+    onErrorContainer = LightOnErrorContainer
 )
 
 private val DarkColorScheme = darkColorScheme(
     primary = BrandIndigoLight,
     onPrimary = DarkBackground,
-    primaryContainer = Color(0xFF1E3A8A),
-    onPrimaryContainer = Color(0xFFDBE4FF),
+    primaryContainer = DarkPrimaryContainer,
+    onPrimaryContainer = DarkOnPrimaryContainer,
     secondary = DarkTextSecondary,
     onSecondary = DarkBackground,
-    secondaryContainer = Color(0xFF334155),
+    secondaryContainer = DarkSecondaryContainer,
     onSecondaryContainer = DarkTextPrimary,
     tertiary = SuccessGreenDark,
     onTertiary = DarkBackground,
-    tertiaryContainer = Color(0xFF065F46),
-    onTertiaryContainer = Color(0xFFD1FAE5),
+    tertiaryContainer = DarkTertiaryContainer,
+    onTertiaryContainer = DarkOnTertiaryContainer,
     background = DarkBackground,
     onBackground = DarkTextPrimary,
     surface = DarkSurface,
     onSurface = DarkTextPrimary,
     surfaceVariant = DarkSurfaceVariant,
     onSurfaceVariant = DarkTextSecondary,
-    outline = Color(0xFF475569),
-    outlineVariant = Color(0xFF334155),
+    outline = DarkOutline,
+    outlineVariant = DarkOutlineVariant,
     error = ErrorRedDark,
     onError = DarkBackground,
-    errorContainer = Color(0xFF7F1D1D),
-    onErrorContainer = Color(0xFFFEE2E2)
+    errorContainer = DarkErrorContainer,
+    onErrorContainer = DarkOnErrorContainer
 )
 
 // 圆角规范：medium=16dp、large=20dp、small=8dp
@@ -74,22 +74,6 @@ private val WatchDogShapes = Shapes(
     medium = RoundedCornerShape(16.dp),
     large = RoundedCornerShape(20.dp)
 )
-
-/**
- * 状态语义色主题扩展，供卡片徽章等场景使用。
- * 不随 MaterialTheme.colorScheme 变化，需要明暗感知时直接按主题选择
- * 对应常量（如 success / successDark）。
- */
-object WatchDogColors {
-    val success = SuccessGreen
-    val successDark = SuccessGreenDark
-    val warning = WarningAmber
-    val warningDark = WarningAmberDark
-    val brandIndigo = BrandIndigo
-
-    fun successFor(darkTheme: Boolean) = if (darkTheme) successDark else success
-    fun warningFor(darkTheme: Boolean) = if (darkTheme) warningDark else warning
-}
 
 @Composable
 fun WatchDogTheme(

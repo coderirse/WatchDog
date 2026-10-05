@@ -3,15 +3,12 @@ package io.github.coderirse.watchdog.ui.components
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -35,32 +32,23 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
-import androidx.compose.ui.geometry.CornerRadius
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.drawscope.DrawScope
-import androidx.compose.ui.graphics.drawscope.Fill
-import androidx.compose.ui.graphics.nativeCanvas
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.annotation.StringRes
 import io.github.coderirse.watchdog.R
 import io.github.coderirse.watchdog.data.model.DailyModelUsage
 import io.github.coderirse.watchdog.data.model.PlatformType
+import io.github.coderirse.watchdog.ui.components.chart.BarChart
+import io.github.coderirse.watchdog.ui.components.chart.ChartEntry
+import io.github.coderirse.watchdog.ui.components.chart.ChartMath
+import io.github.coderirse.watchdog.ui.components.chart.ChartScale
 import io.github.coderirse.watchdog.util.DateFormats
 import java.util.Calendar
 import java.util.Locale
-
-/** 图表轴标签字号（sp）。Canvas 内文字不随 Compose typography 缩放，单独定义。 */
-private const val AXIS_TEXT_SP = 10f
 
 /**
  * Token 用量统计卡：展示按模型 × 按天的 token 消耗（柱状图）。
@@ -84,6 +72,8 @@ fun DailyUsageCard(usages: List<DailyModelUsage>, modifier: Modifier = Modifier)
     var metric by remember { mutableStateOf(Metric.TOTAL_TOKENS) }
     var range by remember { mutableStateOf(Range.ALL) }
     var selectedDate by remember { mutableStateOf<String?>(null) }
+    // 纵轴标度：null = 自动（按数据分布推荐），用户选择后固定
+    var scaleChoice by remember { mutableStateOf<ChartScale?>(null) }
 
     // 来源/模型候选列表只与原始数据有关，缓存避免每帧 distinct + sorted
     val platforms = remember(usages) { usages.map { it.platform }.distinct() }
@@ -107,7 +97,8 @@ fun DailyUsageCard(usages: List<DailyModelUsage>, modifier: Modifier = Modifier)
         selectedPlatform?.displayName,
         selectedModel,
         metric.takeIf { it != Metric.TOTAL_TOKENS }?.let { stringResource(metricLabel(it)) },
-        range.takeIf { it != Range.ALL }?.let { stringResource(rangeLabel(it)) }
+        range.takeIf { it != Range.ALL }?.let { stringResource(rangeLabel(it)) },
+        scaleChoice?.let { stringResource(scaleLabel(it)) }
     )
 
     Card(
@@ -194,6 +185,23 @@ fun DailyUsageCard(usages: List<DailyModelUsage>, modifier: Modifier = Modifier)
                             )
                         }
                     }
+                    FilterGroup(labelRes = R.string.daily_usage_scale) {
+                        listOf<ChartScale?>(null, ChartScale.LINEAR, ChartScale.SQRT, ChartScale.LOG1P)
+                            .forEach { s ->
+                                FilterChip(
+                                    selected = scaleChoice == s,
+                                    onClick = { scaleChoice = s },
+                                    label = {
+                                        Text(
+                                            stringResource(
+                                                if (s == null) R.string.daily_usage_scale_auto
+                                                else scaleLabel(s)
+                                            )
+                                        )
+                                    }
+                                )
+                            }
+                    }
                 }
             }
 
@@ -208,22 +216,15 @@ fun DailyUsageCard(usages: List<DailyModelUsage>, modifier: Modifier = Modifier)
             } else {
                 DailySummaryRow(byDate, metric)
                 Spacer(modifier = Modifier.height(10.dp))
-                DailyBarChart(
+                DailyChartSection(
                     byDate = byDate,
                     metric = metric,
+                    scaleChoice = scaleChoice,
                     selectedDate = selectedDate,
                     onSelectDate = { selectedDate = it },
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(180.dp)
-                )
-                Spacer(modifier = Modifier.height(6.dp))
-                Text(
-                    text = stringResource(R.string.daily_usage_tap_hint),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.fillMaxWidth()
                 )
                 selectedDate?.let { date ->
                     SelectedDayDetail(date, byDate[date].orEmpty())
@@ -326,32 +327,48 @@ private enum class Metric(val totalOf: (DailyModelUsage) -> Double) {
 /** 选中范围/指标下的最新（含数据）日汇总：当日指标 + 总请求数 + 总成本。 */
 @Composable
 private fun DailySummaryRow(byDate: Map<String, List<DailyModelUsage>>, metric: Metric) {
-    val lastDate = byDate.keys
-        .filter { d -> byDate[d].orEmpty().any { it.totalTokens > 0 } }
-        .maxOrNull() ?: byDate.keys.maxOrNull()
-    val last = lastDate?.let { byDate[it] } ?: emptyList()
-    val totalTokens = last.sumOf { it.totalTokens }
-    val requests = last.sumOf { it.requests }
-    // 任一模型成本未知（cost 端点失败/被拦截）时显示占位符，不把未知渲染成 ¥0.00
-    val costUnknown = last.any { it.cost == null }
-    val cost = last.sumOf { it.cost ?: 0.0 }
-    val value = last.sumOf { metric.totalOf(it) }
+    val summary = remember(byDate, metric) {
+        val lastDate = byDate.keys
+            .filter { d -> byDate[d].orEmpty().any { it.totalTokens > 0 } }
+            .maxOrNull() ?: byDate.keys.maxOrNull()
+        val last = lastDate?.let { byDate[it] }.orEmpty()
+        // 任一模型成本未知（cost 端点失败/被拦截）时显示占位符，不把未知渲染成 ¥0.00
+        DailySummary(
+            lastDate = lastDate,
+            value = last.sumOf { metric.totalOf(it) },
+            requests = last.sumOf { it.requests },
+            costUnknown = last.any { it.cost == null },
+            cost = last.sumOf { it.cost ?: 0.0 }
+        )
+    }
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
         SummaryItem(
             stringResource(R.string.daily_usage_latest) +
-                (lastDate?.let { " · ${DateFormats.axisLabel(it, withYear = false)}" } ?: ""),
-            fmtValue(value, metric)
+                (summary.lastDate?.let { " · ${DateFormats.axisLabel(it, withYear = false)}" } ?: ""),
+            fmtValue(summary.value, metric)
         )
-        SummaryItem(stringResource(R.string.daily_usage_requests), formatCompact(requests.toLong()))
+        SummaryItem(
+            stringResource(R.string.daily_usage_requests),
+            formatCompact(summary.requests.toLong())
+        )
         SummaryItem(
             stringResource(R.string.daily_usage_cost),
-            if (costUnknown) "—" else String.format(Locale.US, "¥%.2f", cost)
+            if (summary.costUnknown) "—" else String.format(Locale.US, "¥%.2f", summary.cost)
         )
     }
 }
+
+/** [DailySummaryRow] 的缓存数据载体。 */
+private data class DailySummary(
+    val lastDate: String?,
+    val value: Double,
+    val requests: Long,
+    val costUnknown: Boolean,
+    val cost: Double
+)
 
 @Composable
 private fun SummaryItem(label: String, value: String) {
@@ -370,141 +387,86 @@ private fun SummaryItem(label: String, value: String) {
 }
 
 /**
- * Canvas 柱状图：X 轴按日期排布，Y 轴为所选指标；点击某根柱子回调该日期。
- * 抽稀后的轴标签保证互不叠印；颜色与 Hero 趋势图统一（主色 / 选中态用 tertiary）。
+ * 图表区：共享 [BarChart] + 自动/手动标度 + 非线性标度提示。
+ *
+ * 标度（P1）：Token 用量常见单日尖峰（如 32.7M vs 其余 <1M），
+ * 线性标度下其他柱子几乎不可见 —— 自动检测到尖峰分布时推荐平方根/对数标度，
+ * 并在图下方明示"柱高非线性"，避免误读数值。
  */
 @Composable
-private fun DailyBarChart(
+private fun DailyChartSection(
     byDate: Map<String, List<DailyModelUsage>>,
     metric: Metric,
+    scaleChoice: ChartScale?,
     selectedDate: String?,
     onSelectDate: (String?) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val barColor = MaterialTheme.colorScheme.primary
-    val selectedColor = MaterialTheme.colorScheme.tertiary
-    val referenceLineColor = MaterialTheme.colorScheme.outlineVariant
-    val axisColor = MaterialTheme.colorScheme.onSurfaceVariant
-
     val dates = remember(byDate) { byDate.keys.toList() }
-    val values = remember(byDate, metric) { dates.map { d -> byDate[d].orEmpty().sumOf { metric.totalOf(it) } } }
-    val maxV = values.maxOrNull()?.coerceAtLeast(1.0) ?: 1.0
-
-    val density = LocalDensity.current
-    val axisTextPx = with(density) { AXIS_TEXT_SP.sp.toPx() }
-    val labels = remember(dates) {
+    val entries = remember(byDate, metric) {
         val withYear = DateFormats.spansMultipleYears(dates)
-        dates.map { DateFormats.axisLabel(it, withYear) }
+        dates.map { date ->
+            ChartEntry(
+                key = date,
+                value = byDate[date].orEmpty().sumOf { metric.totalOf(it) },
+                axisLabel = DateFormats.axisLabel(date, withYear)
+            )
+        }
     }
-    val labelWidths = remember(labels, axisTextPx) { labels.map { measureAxisText(it, axisTextPx) } }
+    val values = remember(entries) { entries.map { it.value } }
+    val autoScale = remember(entries) { ChartMath.recommendedScale(values) }
+    val effectiveScale = scaleChoice ?: autoScale
+    val selectedIndex = selectedDate?.let { dates.indexOf(it) }?.takeIf { it >= 0 }
 
     // 读屏无障碍：Canvas 对 TalkBack 是黑盒，用一段汇总文本替代
+    val peak = values.maxOrNull() ?: 0.0
     val summary = stringResource(
         R.string.daily_usage_chart_a11y,
         dates.size,
         fmtValue(values.lastOrNull() ?: 0.0, metric),
-        fmtValue(maxV, metric)
+        fmtValue(peak, metric)
     )
 
-    Box(
-        modifier = modifier
-            .semantics { contentDescription = summary }
-            .pointerInput(dates, selectedDate) {
-                detectTapGestures { offset ->
-                    val left = 6.dp.toPx()
-                    val chartW = size.width - left - 6.dp.toPx()
-                    val slot = if (dates.isEmpty()) 0f else chartW / dates.size
-                    if (slot <= 0f) return@detectTapGestures
-                    val idx = ((offset.x - left) / slot).toInt()
-                    if (idx in dates.indices) {
-                        onSelectDate(if (dates[idx] == selectedDate) null else dates[idx])
-                    }
+    BarChart(
+        entries = entries,
+        selectedIndex = selectedIndex,
+        onSelectIndex = { index -> onSelectDate(index?.let { dates[it] }) },
+        modifier = modifier,
+        scale = effectiveScale,
+        valueLabel = { fmtValue(it, metric) },
+        contentDescription = summary
+    )
+
+    Spacer(modifier = Modifier.height(6.dp))
+    if (effectiveScale != ChartScale.LINEAR) {
+        Text(
+            text = stringResource(
+                if (effectiveScale == ChartScale.SQRT) {
+                    R.string.daily_usage_scale_hint_sqrt
+                } else {
+                    R.string.daily_usage_scale_hint_log
                 }
-            }
-    ) {
-        Canvas(modifier = Modifier.fillMaxSize()) {
-            val left = 6.dp.toPx()
-            val right = 6.dp.toPx()
-            val top = 20.dp.toPx()
-            val bottom = 22.dp.toPx()
-            val chartW = size.width - left - right
-            val chartH = size.height - top - bottom
-            val slot = if (dates.isEmpty()) 0f else chartW / dates.size
-            val corner = 3.dp.toPx()
-
-            // 基线 + 半程参考线：给柱高一个读数参照
-            listOf(0f, 0.5f, 1f).forEach { fraction ->
-                val y = top + chartH * fraction
-                drawLine(
-                    color = referenceLineColor.copy(alpha = 0.7f),
-                    start = Offset(left, y),
-                    end = Offset(left + chartW, y),
-                    strokeWidth = 1f
-                )
-            }
-
-            values.forEachIndexed { i, v ->
-                val h = (chartH * (v / maxV)).toFloat()
-                val xLeft = left + slot * i + slot * 0.2f
-                val barW = (slot * 0.6f).coerceAtLeast(1.5f)
-                val yTop = top + (chartH - h)
-                val isSelected = dates[i] == selectedDate
-                drawRoundRect(
-                    color = (if (isSelected) selectedColor else barColor)
-                        .copy(alpha = if (v > 0) 0.9f else 0.15f),
-                    topLeft = Offset(xLeft, yTop),
-                    size = Size(barW, h.coerceAtLeast(1f)),
-                    cornerRadius = CornerRadius(corner, corner),
-                    style = Fill
-                )
-            }
-
-            // Y 轴最大值提示（左上角）
-            drawAxisText(
-                text = String.format(Locale.US, "▲ %s", fmtValue(maxV, metric)),
-                x = left,
-                y = top - 6.dp.toPx(),
-                color = axisColor,
-                textPx = axisTextPx
-            )
-
-            // 日期轴：按实测宽度抽稀（旧实现固定步长导致末位标签叠印成 `09092630`）
-            if (labels.isNotEmpty()) {
-                val keep = DateFormats.thinLabelIndices(
-                    labels = labels,
-                    slotPx = slot,
-                    measure = { index -> labelWidths[index] },
-                    minGapPx = 8.dp.toPx()
-                )
-                keep.forEach { i ->
-                    val width = labelWidths[i]
-                    val x = (left + slot * i + (slot - width) / 2f)
-                        .coerceIn(left, (size.width - width - right).coerceAtLeast(left))
-                    drawAxisText(labels[i], x, size.height - 4.dp.toPx(), axisColor, axisTextPx)
-                }
-            }
-        }
+            ),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.tertiary
+        )
+        Spacer(modifier = Modifier.height(4.dp))
     }
-}
-
-/** Canvas 文字绘制（字号已按 density 换算为 px）。 */
-private fun DrawScope.drawAxisText(text: String, x: Float, y: Float, color: Color, textPx: Float) {
-    drawContext.canvas.nativeCanvas.drawText(text, x, y, buildAxisPaint(color, textPx))
-}
-
-private fun buildAxisPaint(color: Color, textPx: Float) = android.graphics.Paint().apply {
-    this.color = android.graphics.Color.argb(
-        (color.alpha * 255).toInt(),
-        (color.red * 255).toInt(),
-        (color.green * 255).toInt(),
-        (color.blue * 255).toInt()
+    Text(
+        text = stringResource(R.string.daily_usage_tap_hint),
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        textAlign = TextAlign.Center,
+        modifier = Modifier.fillMaxWidth()
     )
-    textSize = textPx
-    isAntiAlias = true
 }
 
-private fun measureAxisText(text: String, textPx: Float): Float =
-    buildAxisPaint(Color.Black, textPx).measureText(text)
+@StringRes
+private fun scaleLabel(scale: ChartScale): Int = when (scale) {
+    ChartScale.LINEAR -> R.string.daily_usage_scale_linear
+    ChartScale.SQRT -> R.string.daily_usage_scale_sqrt
+    ChartScale.LOG1P -> R.string.daily_usage_scale_log
+}
 
 /** 选中某天的明细展示（该天该来源/模型下的各指标）。 */
 @Composable
@@ -566,13 +528,23 @@ private fun SelectedDayDetail(date: String, dayUsages: List<DailyModelUsage>) {
 
 /**
  * 逐日文字列表：Canvas 图表对读屏不可读，提供等价的可聚焦文本节点。
- * 默认只展示最近 7 天，避免列表过长；用文本按钮切换全部。
+ *
+ * 默认只显示**最近 7 个有数据的日子**：屏幕截图中长时间跨度下大量 0 值行
+ * 会淹没真正有消耗的日子；图表保留零值柱（日期连续性有意义），列表则聚焦有效数据。
+ * 按钮双向切换：全部 / 只看有数据的天。
  */
 @Composable
 private fun DailyAccessibleList(byDate: Map<String, List<DailyModelUsage>>, metric: Metric) {
     var showAll by remember { mutableStateOf(false) }
-    val entries = byDate.entries.toList()
-    val visible = if (showAll) entries else entries.takeLast(7)
+    val allEntries = byDate.entries.toList()
+    val nonZeroEntries = remember(allEntries, metric) {
+        allEntries.filter { (_, list) -> list.any { metric.totalOf(it) > 0.0 } }
+    }
+    val visible = when {
+        showAll -> allEntries
+        nonZeroEntries.isNotEmpty() -> nonZeroEntries.takeLast(7)
+        else -> emptyList()
+    }
 
     HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
     Text(
@@ -581,6 +553,13 @@ private fun DailyAccessibleList(byDate: Map<String, List<DailyModelUsage>>, metr
         color = MaterialTheme.colorScheme.onSurfaceVariant
     )
     Spacer(modifier = Modifier.height(4.dp))
+    if (visible.isEmpty()) {
+        Text(
+            text = stringResource(R.string.daily_usage_zero_days_all),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
     visible.forEach { (date, list) ->
         val value = list.sumOf { metric.totalOf(it) }
         Row(
@@ -604,9 +583,15 @@ private fun DailyAccessibleList(byDate: Map<String, List<DailyModelUsage>>, metr
             )
         }
     }
-    if (entries.size > visible.size) {
-        TextButton(onClick = { showAll = true }) {
-            Text(stringResource(R.string.daily_usage_a11y_show_all, entries.size))
+    if (showAll || allEntries.size > visible.size) {
+        TextButton(onClick = { showAll = !showAll }) {
+            Text(
+                stringResource(
+                    if (showAll) R.string.daily_usage_a11y_show_nonzero_only
+                    else R.string.daily_usage_a11y_show_all,
+                    allEntries.size
+                )
+            )
         }
     }
 }

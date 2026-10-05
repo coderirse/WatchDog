@@ -1,5 +1,11 @@
 package io.github.coderirse.watchdog.ui.navigation
 
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
@@ -28,6 +34,7 @@ import io.github.coderirse.watchdog.ui.more.MoreScreen
 object Routes {
     const val DASHBOARD = "dashboard"
     const val MORE = "more"
+    const val SETTINGS = "settings"
 }
 
 data class BottomNavItem(
@@ -35,6 +42,16 @@ data class BottomNavItem(
     val label: String,
     val icon: ImageVector
 )
+
+/**
+ * 页面转场（原先三处 `composable()` 均无过渡，切页是硬切）：
+ * - 推入设置页：轻微右滑 + 淡入，返回时对称滑出；
+ * - 底部 Tab 切换：极小垂直位移 + 淡入，与页面推入/返回的手势方向语义区分开。
+ * 时长控制在 150–220ms，避免拖慢感知的刷新/切换速度。
+ */
+private const val PUSH_IN_DURATION = 220
+private const val PUSH_OUT_DURATION = 150
+private const val TAB_SLIDE_DISTANCE = 24
 
 @Composable
 fun WatchDogNavGraph(
@@ -87,12 +104,24 @@ fun WatchDogNavGraph(
         NavHost(
             navController = navController,
             startDestination = Routes.DASHBOARD,
-            modifier = Modifier.padding(innerPadding)
+            modifier = Modifier.padding(innerPadding),
+            // 底部 Tab 切换的默认过渡（dashboard <-> more）：
+            // 极小位移 + 淡入，弱化方向感（Tab 语义是"平级切换"而非"推入"）
+            enterTransition = {
+                fadeIn(tween(PUSH_IN_DURATION)) +
+                    slideInVertically(tween(PUSH_IN_DURATION)) { TAB_SLIDE_DISTANCE }
+            },
+            exitTransition = { fadeOut(tween(PUSH_OUT_DURATION)) },
+            popEnterTransition = {
+                fadeIn(tween(PUSH_IN_DURATION)) +
+                    slideInVertically(tween(PUSH_IN_DURATION)) { -TAB_SLIDE_DISTANCE }
+            },
+            popExitTransition = { fadeOut(tween(PUSH_OUT_DURATION)) }
         ) {
             composable(Routes.DASHBOARD) {
                 DashboardScreen(
                     onNavigateToSettings = {
-                        navController.navigate("settings") {
+                        navController.navigate(Routes.SETTINGS) {
                             launchSingleTop = true
                         }
                     }
@@ -101,7 +130,20 @@ fun WatchDogNavGraph(
             composable(Routes.MORE) {
                 MoreScreen()
             }
-            composable("settings") {
+            composable(
+                route = Routes.SETTINGS,
+                // 设置页是"推入"的目的地：轻微右滑进场，返回时对称滑出
+                enterTransition = {
+                    fadeIn(tween(PUSH_IN_DURATION)) +
+                        slideInHorizontally(tween(PUSH_IN_DURATION)) { it / 8 }
+                },
+                exitTransition = { fadeOut(tween(PUSH_OUT_DURATION)) },
+                popEnterTransition = { fadeIn(tween(PUSH_OUT_DURATION)) },
+                popExitTransition = {
+                    fadeOut(tween(PUSH_OUT_DURATION)) +
+                        slideOutHorizontally(tween(PUSH_OUT_DURATION)) { it / 8 }
+                }
+            ) {
                 io.github.coderirse.watchdog.ui.settings.SettingsScreen(
                     onBack = { navController.popBackStack() }
                 )
