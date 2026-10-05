@@ -18,6 +18,7 @@ import io.github.coderirse.watchdog.data.local.BalanceHistoryStore
 import io.github.coderirse.watchdog.data.local.QuotaCacheStore
 import io.github.coderirse.watchdog.data.local.SettingsStore
 import io.github.coderirse.watchdog.data.local.WebSessionStore
+import io.github.coderirse.watchdog.data.repository.MiMoSessionVerifier
 import io.github.coderirse.watchdog.data.repository.QuotaRepository
 import io.github.coderirse.watchdog.data.repository.providers.DeepSeekProvider
 import io.github.coderirse.watchdog.data.repository.providers.GlmProvider
@@ -105,6 +106,7 @@ class AppContainer(context: Context) {
     val webSessionStore: WebSessionStore = WebSessionStore(context.applicationContext)
 
     // Repository：编排层 + 各平台 Provider（新增平台 = 新增一个 Provider 并在此注册）
+    // Provider 依赖 WebSessionAccess 窄接口（webSessionStore 为其实现），便于纯 JVM 测试
     val quotaRepository: QuotaRepository = QuotaRepository(
         configSource = settingsStore,
         cache = quotaCacheStore,
@@ -125,6 +127,13 @@ class AppContainer(context: Context) {
         context = context.applicationContext,
         settingsStore = settingsStore
     )
+
+    /**
+     * MiMo 会话校验器：登录抓取时用**与抓取数据完全相同的 App 侧请求**判断凭证是否有效，
+     * 取代原先"页面内 fetch + 靠 WebView.url 判断"的方案（后者会把坏凭证误判为有效并保存）。
+     */
+    val miMoSessionVerifier: MiMoSessionVerifier =
+        MiMoSessionVerifier(mimoConsoleApi, settingsStore)
 
     // 余额历史快照（趋势图）
     val balanceHistoryStore: BalanceHistoryStore = BalanceHistoryStore(context.applicationContext)

@@ -36,28 +36,37 @@ object KimiConsoleParser {
         ).takeIf { it.balance != null || it.todayCost != null || it.monthCost != null || it.totalCost != null }
     }
 
-    /** 在 [text] 中找 [keywords] 任一关键词，取其之后最近的金额形如 7.56019 / 125.70595。 */
+    // 货币符号锚定：¥/￥ 后跟整数或带千分位的金额（如 ¥125、¥1,234.56），置信度最高
+    private val CURRENCY_AMOUNT = Regex("""[¥￥]\s*(\d{1,3}(?:,\d{3})*(?:\.\d{1,6})?|\d+)""")
+    // 带小数点的金额：前后不得紧邻字母/数字/点，排除日期(2026.10.02)、版本号(kimi-k2.5)等
+    private val DECIMAL_AMOUNT = Regex("""(?<![0-9A-Za-z.])\d{1,3}(?:,\d{3})*\.\d{1,6}(?![0-9A-Za-z.])""")
+    // 千分位整数（如 1,235）：无小数点但分组逗号是强金额特征
+    private val GROUPED_AMOUNT = Regex("""(?<![0-9A-Za-z.,])\d{1,3}(?:,\d{3})+(?![0-9A-Za-z.,])""")
+
+    /**
+     * 在 [text] 中找 [keywords] 任一关键词，取其后 400 字符内的金额。
+     * 三层置信度递减：货币符号锚定 → 带小数点数字 → 千分位整数。
+     * 旧实现的盲窗裸匹配会把日期 "2026.10.02" 匹配成 "026.10"、模型名 "kimi-k2.5"
+     * 匹配成 "2.5"，整数金额 "¥125" 则因强制要求小数点而漏采。
+     */
     private fun amountNear(text: String, keywords: List<String>): String? {
         for (kw in keywords) {
             val idx = text.indexOf(kw)
             if (idx < 0) continue
             val tail = text.substring(idx, (idx + 400).coerceAtMost(text.length))
-            // 金额可能被 HTML 标签/引号/转义分隔，匹配数字串（可带小数点、逗号）
-            val m = Regex("""\d{1,3}(?:,\d{3})*(?:\.\d{1,6})""").find(tail)
-            if (m != null) return m.value
+            CURRENCY_AMOUNT.find(tail)?.let { return it.groupValues[1] }
+            DECIMAL_AMOUNT.find(tail)?.let { return it.value }
+            GROUPED_AMOUNT.find(tail)?.let { return it.value }
         }
         return null
     }
 
-    /** 还原常见 HTML/JSON 转义与 \uXXXX。 */
+    private val UNICODE_ESCAPE = Regex("""\\u([0-9a-fA-F]{4})""")
+
+    /** 还原常见 HTML/JSON 转义与全部 \uXXXX（旧表只覆盖 9 个字，其余标签在转义负载下永远失配）。 */
     private fun unescape(s: String): String {
-        var r = s
-        r = r.replace("\\u4f59", "余").replace("\\u989d", "额")
-            .replace("\\u4eca", "今").replace("\\u65e5", "日")
-            .replace("\\u6d88", "消").replace("\\u8d39", "费")
-            .replace("\\u672c", "本").replace("\\u6708", "月")
-            .replace("\\u603b", "总")
-            .replace("\\\"", "\"").replace("\\/", "/").replace("&nbsp;", " ")
+        var r = UNICODE_ESCAPE.replace(s) { m -> m.groupValues[1].toInt(16).toChar().toString() }
+        r = r.replace("\\\"", "\"").replace("\\/", "/").replace("&nbsp;", " ")
             .replace("&#165;", "¥").replace("&yen;", "¥")
         return r
     }

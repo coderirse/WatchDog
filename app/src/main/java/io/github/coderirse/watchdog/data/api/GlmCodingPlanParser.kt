@@ -55,11 +55,14 @@ object GlmCodingPlanParser {
                 return@mapNotNull null
             }
             val unit = item.intOr("unit")
+            // unit 语义来自 cc-switch 实测（3=5小时滚动窗口，6=周）。未知/缺失不再静默丢弃：
+            // 上游新增窗口类型时展示通用名称，窗口消失本身就是"接口已变更"的信号
             val name = when (unit) {
                 3 -> "5小时"
                 6 -> "周"
-                else -> null
-            } ?: return@mapNotNull null
+                null -> "配额窗口"
+                else -> "配额窗口(unit=$unit)"
+            }
             val usedPercent = item.doubleOr("percentage")
             val reset = item.longOr("nextResetTime")
             QuotaWindow(name, usedPercent, reset)

@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <!-- 网页登录页（WebLoginActivity，纯 View 实现）尺寸令牌。 -->
+
+    <!-- 标题区 / 按钮行左右内边距 -->
+    <dimen name="wd_login_content_padding">16dp</dimen>
+
+    <!-- 标题区内边距（上 12dp / 下 6dp） -->
+    <dimen name="wd_login_info_padding_top">12dp</dimen>
+    <dimen name="wd_login_info_padding_bottom">6dp</dimen>
+
+    <!-- 按钮行内边距（上 8dp / 下 12dp） -->
+    <dimen name="wd_login_buttons_padding_top">8dp</dimen>
+    <dimen name="wd_login_buttons_padding_bottom">12dp</dimen>
+
+    <!-- 底部按钮高度与圆角 -->
+    <dimen name="wd_login_button_height">48dp</dimen>
+    <dimen name="wd_login_button_corner">24dp</dimen>
+
+    <!-- 两个按钮之间的间距（语义独立于按钮行上内边距，虽然当前同为 8dp） -->
+    <dimen name="wd_login_button_gap">8dp</dimen>
+
+</resources>

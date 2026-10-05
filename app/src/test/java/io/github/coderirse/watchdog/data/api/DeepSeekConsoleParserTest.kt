@@ -306,4 +306,20 @@ class DeepSeekConsoleParserTest {
         assertNull(DeepSeekConsoleParser.parseMonthlyDaysByModel("""{"data":{"biz_data":[{"days":[]}]}}""", costMode = false))
         assertNull(DeepSeekConsoleParser.parseMonthlyDaysByModel("""{"data":{"biz_data":[]}}""", costMode = false))
     }
+
+    @Test
+    fun `amount 为非数字字符串不抛异常且千分位可解析`() {
+        // 旧实现的 asDouble 兜底对 "1,234.56" 抛 NumberFormatException（违反"绝不抛异常"契约），
+        // "N/A" 同理导致整次控制台抓取失败
+        val json = """
+            {"data":{"biz_code":0,"biz_data":[{"total":[
+                {"model":"deepseek-chat","usage":[{"type":"RESPONSE_TOKEN","amount":"1,234.56"}]},
+                {"model":"deepseek-reasoner","usage":[{"type":"RESPONSE_TOKEN","amount":"N/A"}]}
+            ]}]}}
+        """.trimIndent()
+        val rows = DeepSeekConsoleParser.parseMonthlyTotals(json, costMode = false)
+        assertNotNull(rows)
+        assertEquals(1234L, rows!!.first { it.model == "deepseek-chat" }.outputTokens)
+        assertNotNull(rows.first { it.model == "deepseek-reasoner" })
+    }
 }

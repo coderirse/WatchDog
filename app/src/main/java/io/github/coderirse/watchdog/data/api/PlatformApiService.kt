@@ -92,16 +92,21 @@ interface KimiConsoleApi {
  * 小米 MiMo 网页控制台内部接口（非官方，可能变更）。
  *
  * 官方文档确认：MiMo 没有"仅凭 API Key"的余额/用量查询接口；
- * 网页控制台（platform.xiaomimimo.com）通过同源 /api/v1 路径接口获取数据，
- * 鉴权为名为 api-platform_ph 的请求头（值为浏览器 Cookie 中的同名值，
- * 由 WebLoginActivity 在用户完成网页登录后自动抓取）。
+ * 网页控制台（platform.xiaomimimo.com）通过同源 /api/v1 路径接口获取数据。
  *
- * 2026-02 bundle 逆向实测：
- * - 任意 /api/v1 路径在缺少会话头时统一返回 401（网关先鉴权后路由），
- *   因此无法离线预判余额接口路径，需带会话运行时探测（见 MiMoConsoleParser.BALANCE_CANDIDATES）。
- * - 已验证存在的路径：tokenPlan/detail、tokenPlan/usage、tokenPlan/list、balanceAlertConfig 等。
+ * ⚠️ 鉴权必须是**整串浏览器 Cookie**，不能只带 api-platform_ph：
+ * 2026-09 真机实测（登录刚完成、页面内 fetch 校验通过的前提下）——
+ * 只带 `api-platform_ph` 请求头时 detail/usage 稳定返回
+ * `401 {"code":401,"loginUrl":"https://account.xiaomi.com/pass/serviceLogin..."}`
+ * 且响应头含 `www-authenticate`（标准鉴权拒绝，非风控）。
+ * 同一时刻浏览器同源请求会带上全部 4 个 Cookie
+ * （api-platform_serviceToken / userId / api-platform_slh / api-platform_ph），
+ * 网关即正常返回。故 [MiMoConsoleApi] 的每个方法都要求传完整 Cookie 串。
  *
- * 所有响应以原始 JSON 返回，由 MiMoConsoleParser 做防御性解析。
+ * 另注：api-platform_ph 仍作为独立请求头保留传入（部分部署可能同时校验），
+ * 但仅当它存在时才发送。
+ *
+ * 所有响应以原始 JSON 返回，由 [MiMoConsoleParser] 做防御性解析。
  * 请求携带浏览器特征头（同 WebView UA）降低网关风控误伤。
  */
 interface MiMoConsoleApi {
@@ -115,7 +120,8 @@ interface MiMoConsoleApi {
     )
     @GET("api/v1/tokenPlan/detail")
     suspend fun getTokenPlanDetail(
-        @Header("api-platform_ph") session: String
+        @Header("api-platform_ph") session: String?,
+        @Header("Cookie") cookie: String?
     ): Response<ResponseBody>
 
     @Headers(
@@ -127,7 +133,8 @@ interface MiMoConsoleApi {
     )
     @GET("api/v1/tokenPlan/usage")
     suspend fun getTokenPlanUsage(
-        @Header("api-platform_ph") session: String
+        @Header("api-platform_ph") session: String?,
+        @Header("Cookie") cookie: String?
     ): Response<ResponseBody>
 
     @Headers(
@@ -139,7 +146,8 @@ interface MiMoConsoleApi {
     )
     @GET("api/v1/tokenPlan/list")
     suspend fun getTokenPlanList(
-        @Header("api-platform_ph") session: String
+        @Header("api-platform_ph") session: String?,
+        @Header("Cookie") cookie: String?
     ): Response<ResponseBody>
 
     /** 通用 GET：用于带会话探测余额类候选路径（见 MiMoConsoleParser）。 */
@@ -152,7 +160,8 @@ interface MiMoConsoleApi {
     )
     @GET
     suspend fun getRaw(
-        @Header("api-platform_ph") session: String,
+        @Header("api-platform_ph") session: String?,
+        @Header("Cookie") cookie: String?,
         @Url path: String
     ): Response<ResponseBody>
 }

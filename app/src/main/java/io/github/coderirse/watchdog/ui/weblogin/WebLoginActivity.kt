@@ -1,4 +1,4 @@
-package io.github.coderirse.watchdog.ui.weblogin
+﻿package io.github.coderirse.watchdog.ui.weblogin
 
 import android.annotation.SuppressLint
 import android.content.Context
@@ -17,11 +17,15 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
+import io.github.coderirse.watchdog.BuildConfig
 import io.github.coderirse.watchdog.MainActivity
 import io.github.coderirse.watchdog.R
 import io.github.coderirse.watchdog.WatchDogApplication
 import io.github.coderirse.watchdog.data.model.PlatformType
+import io.github.coderirse.watchdog.data.repository.MiMoSessionVerifier
+import io.github.coderirse.watchdog.util.DebugLog
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -61,30 +65,33 @@ class WebLoginActivity : ComponentActivity() {
     /** 已被平台 API 拒绝的 MiMo Cookie 值（避免轮询反复用失效凭证打接口）。 */
     private var mimoRejectedToken: String? = null
 
+    /** MiMo App 侧校验进行中标志：避免 1.5s 轮询叠加并发请求。 */
+    private var mimoVerifying = false
+
     /** Kimi 方案 A：捕获到凭证后暂存内存，停留页面，待用户确认(完成并返回)再存储+跳转。 */
     private var kimiToken: String? = null
     private var kimiCookie: String? = null
     private var captureButton: Button? = null
 
-    /** 调试日志（仅 debug 构建）：直写文件（logcat 在部分 ROM 上会卡死/丢日志）。 */
+    /**
+     * 调试日志（仅 debug 构建）：统一走 [DebugLog]——同时写 logcat 与
+     * `cacheDir/watchdog_debug.log`。落盘的意义是真机诊断时设备可能掉线、
+     * logcat 缓冲区会被冲掉，而这类"抓不到数据"的问题必须在现场取到痕迹。
+     */
     private fun flog(msg: String) {
-        if (!io.github.coderirse.watchdog.BuildConfig.DEBUG) return
-        android.util.Log.i("WatchDogLogin", msg)
-        runCatching {
-            val f = java.io.File(cacheDir, "weblogin_debug.log")
-            // 每次进入登录页先清掉上次会话的残留日志，避免历史凭证线索长期驻留
-            if (!debugLogTruncated) {
-                f.delete()
-                debugLogTruncated = true
-            }
-            f.appendText(
-                java.text.SimpleDateFormat("HH:mm:ss.SSS", java.util.Locale.US)
-                    .format(java.util.Date()) + " " + msg + "\n"
-            )
-        }
+        if (!BuildConfig.DEBUG) return
+        DebugLog.i("WatchDogLogin", msg)
     }
 
-    private var debugLogTruncated = false
+    /**
+     * 日志用 URL 脱敏：剥掉查询串与 fragment，只留 scheme+host+path。
+     * OAuth 回跳 URL 常携带授权 code/token 等敏感查询参数，整条记录进日志会落盘。
+     */
+    private fun redactUrl(url: String?): String =
+        if (url.isNullOrBlank()) "null"
+        else runCatching {
+            android.net.Uri.parse(url).buildUpon().query(null).fragment(null).toString()
+        }.getOrDefault("<unparsable>")
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -139,16 +146,25 @@ class WebLoginActivity : ComponentActivity() {
      * WebView 内部渲染。
      */
     private fun buildLayout(): LinearLayout {
-        val dp = resources.displayMetrics.density
-        // 深色模式适配：标题区/按钮行随系统主题，WebView 内容仍走白底（平台登录页为浅色）
-        val night = resources.configuration.uiMode and
-            android.content.res.Configuration.UI_MODE_NIGHT_MASK ==
-            android.content.res.Configuration.UI_MODE_NIGHT_YES
-        val chromeBg = if (night) Color.rgb(0x0F, 0x17, 0x2A) else Color.WHITE
-        val titleColor = if (night) Color.rgb(0xF1, 0xF5, 0xF9) else Color.BLACK
-        val subColor = if (night) Color.rgb(0x94, 0xA3, 0xB8) else Color.GRAY
-        val cancelColor = if (night) Color.rgb(0x33, 0x41, 0x55) else Color.rgb(0xEE, 0xEE, 0xF2)
-        val cancelTextColor = if (night) Color.rgb(0xE2, 0xE8, 0xF0) else Color.BLACK
+        // 深色模式适配：标题区/按钮行随系统主题，WebView 内容仍走白底（平台登录页为浅色）。
+        // 颜色一律取自资源（令牌与 Compose 主题同源）：深色值由 values-night/colors.xml
+        // 自动接管，代码不再判断 uiMode、不再硬编码色值。
+        val chromeBg = ContextCompat.getColor(this, R.color.wd_login_chrome_bg)
+        val titleColor = ContextCompat.getColor(this, R.color.wd_login_title_text)
+        val subColor = ContextCompat.getColor(this, R.color.wd_login_sub_text)
+        val cancelColor = ContextCompat.getColor(this, R.color.wd_login_outlined_bg)
+        val cancelTextColor = ContextCompat.getColor(this, R.color.wd_login_outlined_text)
+        val primaryColor = ContextCompat.getColor(this, R.color.wd_login_primary)
+
+        // 尺寸一律取自 @dimen/wd_login_*（按当前屏幕密度换算为像素）
+        val contentPadding = resources.getDimensionPixelSize(R.dimen.wd_login_content_padding)
+        val infoPaddingTop = resources.getDimensionPixelSize(R.dimen.wd_login_info_padding_top)
+        val infoPaddingBottom = resources.getDimensionPixelSize(R.dimen.wd_login_info_padding_bottom)
+        val buttonsPaddingTop = resources.getDimensionPixelSize(R.dimen.wd_login_buttons_padding_top)
+        val buttonsPaddingBottom = resources.getDimensionPixelSize(R.dimen.wd_login_buttons_padding_bottom)
+        val buttonHeight = resources.getDimensionPixelSize(R.dimen.wd_login_button_height)
+        // GradientDrawable.cornerRadius 需要 Float，故这里用 getDimension 而非 getDimensionPixelSize
+        val buttonCorner = resources.getDimension(R.dimen.wd_login_button_corner)
 
         // 全屏适配：根布局不设左右 padding，WebView 铺满（修复"白边不适配"）
         val root = LinearLayout(this).apply {
@@ -159,7 +175,7 @@ class WebLoginActivity : ComponentActivity() {
         // 标题区左右留边距（仅文字区，不作用于 WebView）
         val info = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding((16 * dp).toInt(), (12 * dp).toInt(), (16 * dp).toInt(), (6 * dp).toInt())
+            setPadding(contentPadding, infoPaddingTop, contentPadding, infoPaddingBottom)
             setBackgroundColor(chromeBg)
         }
         val title = TextView(this).apply {
@@ -195,25 +211,26 @@ class WebLoginActivity : ComponentActivity() {
 
         // 底部按钮：Material 观感（圆角 + 主色填充 / 次要色描边），非复古系统按钮
         val cancelBg = android.graphics.drawable.GradientDrawable().apply {
-            cornerRadius = (24 * dp).toInt().toFloat()
+            cornerRadius = buttonCorner
             setColor(cancelColor)
         }
         val captureBg = android.graphics.drawable.GradientDrawable().apply {
-            cornerRadius = (24 * dp).toInt().toFloat()
-            setColor(Color.rgb(0x6C, 0x4D, 0xFF))
+            cornerRadius = buttonCorner
+            setColor(primaryColor)
         }
         val buttons = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            setPadding((16 * dp).toInt(), (8 * dp).toInt(), (16 * dp).toInt(), (12 * dp).toInt())
+            setPadding(contentPadding, buttonsPaddingTop, contentPadding, buttonsPaddingBottom)
             setBackgroundColor(chromeBg)
         }
-        val gap = (8 * dp).toInt()
+        // 按钮间距
+        val gap = resources.getDimensionPixelSize(R.dimen.wd_login_button_gap)
         val cancel = Button(this).apply {
             text = getString(R.string.action_cancel)
             background = cancelBg
             setTextColor(cancelTextColor)
             textSize = 15f
-            layoutParams = LinearLayout.LayoutParams(0, (48 * dp).toInt(), 1f)
+            layoutParams = LinearLayout.LayoutParams(0, buttonHeight, 1f)
             setOnClickListener { finish() }
         }
         val capture = Button(this).apply {
@@ -221,12 +238,12 @@ class WebLoginActivity : ComponentActivity() {
             background = captureBg
             setTextColor(Color.WHITE)
             textSize = 15f
-            layoutParams = LinearLayout.LayoutParams(0, (48 * dp).toInt(), 1f)
+            layoutParams = LinearLayout.LayoutParams(0, buttonHeight, 1f)
             setOnClickListener { onCaptureButtonClick() }
         }
         captureButton = capture
         // 复用布局参数：给 gap 用 margin
-        val cancelLp = LinearLayout.LayoutParams(0, (48 * dp).toInt(), 1f)
+        val cancelLp = LinearLayout.LayoutParams(0, buttonHeight, 1f)
         cancelLp.marginEnd = gap
         cancel.layoutParams = cancelLp
         buttons.addView(cancel)
@@ -278,20 +295,22 @@ class WebLoginActivity : ComponentActivity() {
         }
         webView.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-                flog("nav -> ${request.url}")
+                flog("nav -> ${redactUrl(request.url.toString())}")
                 return false
             }
 
             override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) {
                 super.onPageStarted(view, url, favicon)
-                flog("start $url")
+                flog("start ${redactUrl(url)}")
             }
 
             override fun onPageFinished(view: WebView, url: String?) {
                 super.onPageFinished(view, url)
-                flog("finish $url")
+                flog("finish ${redactUrl(url)}")
                 // Kimi：探测页面实际发起的 API 请求（找出控制台用量接口路径）
-                if (loginPlatform == PlatformType.KIMI) {
+                // 仅 debug 构建执行：这是纯诊断脚本，release 下既无日志出口也无收益，
+                // 不应在用户登录页里注入并运行多余 JS
+                if (BuildConfig.DEBUG && loginPlatform == PlatformType.KIMI) {
                     view.evaluateJavascript(
                         "(function(){try{var es=performance.getEntriesByType('resource');" +
                             "return JSON.stringify(es.map(function(e){return e.name.substring(0,120)})" +
@@ -308,9 +327,11 @@ class WebLoginActivity : ComponentActivity() {
                 error: android.webkit.WebResourceError
             ) {
                 super.onReceivedError(view, request, error)
-                android.util.Log.w(
-                    "WatchDogLogin",
-                    "resource-error ${request.url} ${error.description} (code=${error.errorCode}) main=${request.isForMainFrame}"
+                // 走 flog + URL 脱敏：裸 android.util.Log 在 release 同样生效，
+                // 且完整 URL 的 OAuth 回调参数（code/token）属敏感信息
+                flog(
+                    "resource-error ${redactUrl(request.url.toString())} ${error.description} " +
+                        "(code=${error.errorCode}) main=${request.isForMainFrame}"
                 )
             }
 
@@ -320,9 +341,9 @@ class WebLoginActivity : ComponentActivity() {
                 errorResponse: android.webkit.WebResourceResponse
             ) {
                 super.onReceivedHttpError(view, request, errorResponse)
-                android.util.Log.w(
-                    "WatchDogLogin",
-                    "http-error ${request.url} status=${errorResponse.statusCode} main=${request.isForMainFrame}"
+                flog(
+                    "http-error ${redactUrl(request.url.toString())} " +
+                        "status=${errorResponse.statusCode} main=${request.isForMainFrame}"
                 )
             }
         }
@@ -379,9 +400,14 @@ class WebLoginActivity : ComponentActivity() {
         val wv = webViewReady ?: run { if (manual) toastNoSession(); return }
         runCatching {
             wv.evaluateJavascript(kimiCaptureScript) { raw ->
-                flog("kimi capture raw=${raw?.take(120)} url=${wv.url}")
+                // 只记长度与键名：raw 与 obj 都以 {"token":"eyJ…"} 开头，
+                // 截取内容必然带出 token 明文前缀（DebugLog 纪律：令牌只记长度与名字）
+                flog("kimi capture rawLen=${raw?.length ?: -1} url=${wv.url}")
                 val obj = parseJsObject(raw)
-                flog("kimi parsed obj=${obj?.toString()?.take(120)} tokLen=${obj?.optString("token")?.length}")
+                flog(
+                    "kimi parsed keys=${obj?.keys()?.asSequence()?.toList() ?: "null"} " +
+                        "tokLen=${obj?.optString("token")?.length}"
+                )
                 // 每次轮询都尝试保存快照：Kimi 首页金额是 SPA 异步渲染，
                 // 首次采集可能为 null，页面渲染完成后才有值，故持续采到非空即覆盖
                 if (obj != null) {
@@ -470,12 +496,34 @@ class WebLoginActivity : ComponentActivity() {
             // 采集结构化金额：定位「标签文本」元素，取其所在行的容器（标签+紧邻数值）。
             // 不用整棵父级拍平文本——那样会跨指标串位（today 误匹配到 balance）。
             var balance = null, today = null, month = null, total = null;
+            function boundaryOk(s, idx, len){
+              var before = idx > 0 ? s.charAt(idx - 1) : '';
+              var after = s.charAt(idx + len);
+              var bad = /[0-9A-Za-z.]/;
+              return !bad.test(before) && !(after && bad.test(after));
+            }
             function grabNumber(container){
               if(!container) return null;
-              // 在容器里优先取「￥/¥ 后或独立数字」形如 7.56019 / 1.73004 的值（含小数）
-              var txt = (container.textContent||'').replace(/[￥¥]/g, ' ');
-              var m = txt.match(/\d{1,3}(?:,\d{3})*(?:\.\d{1,6})/);
-              return m ? m[0] : null;
+              var txt = container.textContent || '';
+              if(!txt) return null;
+              // 1) 货币符号锚定（兼容整数金额如 ¥125）：置信度最高
+              var cur = txt.match(/(?:￥|¥)\s*(\d{1,3}(?:,\d{3})*(?:\.\d{1,6})?|\d+)/);
+              if(cur) return cur[1];
+              // 2/3) 千分位整数与带小数点数字：前后不得紧邻字母/数字/点，
+              // 排除日期(2026.10.02)、版本号(kimi-k2.5-turbo)等误匹配。
+              // 手写边界检查而非 lookbehind，兼容旧 WebView
+              var plain = txt.replace(/[￥¥]/g, ' ');
+              var grouped = /(\d{1,3}(?:,\d{3})+)/g;
+              var g;
+              while((g = grouped.exec(plain)) !== null){
+                if(boundaryOk(plain, g.index, g[0].length)) return g[1];
+              }
+              var dec = /(\d{1,3}(?:,\d{3})*\.\d{1,6})/g;
+              var d;
+              while((d = dec.exec(plain)) !== null){
+                if(boundaryOk(plain, d.index, d[0].length)) return d[1];
+              }
+              return null;
             }
             try{
               var all = document.querySelectorAll('body *');
@@ -511,10 +559,8 @@ class WebLoginActivity : ComponentActivity() {
                 buildStorageCaptureScript("platform.deepseek.com", "/api/v0/users/get_user_summary")
             ) { raw ->
                 if (io.github.coderirse.watchdog.BuildConfig.DEBUG) {
-                    android.util.Log.d(
-                        "WatchDogLogin",
-                        "deepseek capture raw=${raw?.take(80)} url=${wv.url}"
-                    )
+                    // 只记长度：raw 以 {"token":"…"} 开头，截取内容会带出 token 明文前缀
+                    flog("deepseek capture rawLen=${raw?.length ?: -1} url=${wv.url}")
                 }
                 val obj = parseJsObject(raw)
                 when {
@@ -544,8 +590,23 @@ class WebLoginActivity : ComponentActivity() {
         }.onFailure { if (manual) toastNoSession() }
     }
 
-    // ===== MiMo：CookieManager 取 api-platform_ph（HttpOnly 可见）→ 页面内 fetch 验证 =====
+    // ===== MiMo：CookieManager 取 api-platform_ph → **App 侧**请求验证 → 保存 =====
 
+    /**
+     * MiMo 凭证抓取。
+     *
+     * 修复的关键点（原实现会"登录成功却抓不到"）：
+     * 1. **不再用 `WebView.url` 决定是否校验**。原代码在"url 不含平台域"时直接
+     *    `finishWithSession`（注释写着"出现即视为有效"），而 OAuth 回跳瞬间
+     *    `WebView.url` 往往还是账号域（甚至为空），于是把未经验证的凭证当成有效保存 ——
+     *    随后 Provider 侧请求被网关 401，用户看到的就是"登录成功了但抓不到数据"。
+     *    现在改为：不在平台域就**继续轮询等待**，不保存。
+     * 2. **校验改到 App 侧**（[MiMoSessionVerifier]）：用与抓取数据完全相同的
+     *    OkHttp 请求 + 同一份 Cookie 判断有效性。页面内 fetch 自动带该源全部 Cookie
+     *    与浏览器指纹，通过并不代表 App 侧能通过，原方案是在用另一种传输方式做判断。
+     * 3. 校验结果区分「明确被拒」（401/403）与「无法判定」（网络异常），后者继续轮询重试，
+     *    不再把瞬时网络问题当成"凭证无效"。
+     */
     private fun captureMimo(manual: Boolean) {
         val wv = webViewReady
         val cookies = runCatching {
@@ -559,32 +620,56 @@ class WebLoginActivity : ComponentActivity() {
             }
             return
         }
-        // 页面不在平台域（仍在小米账号 OAuth 页）时无法发起同源验证：
-        // api-platform_ph 仅在登录回跳后由平台设置，出现即视为有效，直接采用
-        val onPlatformHost = wv?.url.orEmpty().contains("platform.xiaomimimo.com")
-        if (wv == null || !onPlatformHost) {
-            finishWithSession(token, cookies)
+        // 未回到平台域（仍在小米账号 OAuth 页）时不保存，等待回跳后 Cookie 集齐再校验。
+        // 注意这里刻意"失败即等待"而不是"当作有效"：宁可不保存，也不能保存坏凭证。
+        if (wv == null) {
+            if (manual) toastNoSession()
             return
         }
-        runCatching {
-            wv.evaluateJavascript(mimoVerifyScript(token)) { raw ->
-                val obj = parseJsObject(raw)
-                when {
-                    obj?.optBoolean("valid") == true -> finishWithSession(token, cookies)
-                    obj != null && obj.has("valid") && !obj.optBoolean("valid") -> {
+        val onPlatformHost = wv.url.orEmpty().contains("platform.xiaomimimo.com")
+        if (!onPlatformHost) {
+            if (manual) {
+                toastNoSession()
+                runDiagnostics(wv)
+            }
+            return
+        }
+        verifyMimoSessionThenSave(token, cookies, manual, wv)
+    }
+
+    /** App 侧校验 MiMo 会话，结果决定保存 / 继续等待 / 明确报错。 */
+    private fun verifyMimoSessionThenSave(
+        token: String,
+        cookies: String?,
+        manual: Boolean,
+        wv: WebView
+    ) {
+        if (mimoVerifying) return
+        mimoVerifying = true
+        val verifier = (application as WatchDogApplication).appContainer.miMoSessionVerifier
+        lifecycleScope.launch {
+            val result = runCatching { verifier.verify(token, cookies) }.getOrNull()
+            withContext(Dispatchers.Main) {
+                mimoVerifying = false
+                when (result) {
+                    is MiMoSessionVerifier.Result.Valid -> {
+                        flog("mimo app-side verify PASS (tokenLen=${token.length} cookieLen=${cookies?.length ?: 0})")
+                        finishWithSession(token, cookies)
+                    }
+                    is MiMoSessionVerifier.Result.Rejected -> {
                         mimoRejectedToken = token
+                        flog("mimo app-side verify REJECTED (401/403), tokenLen=${token.length}")
                         if (manual) toastInvalidSession()
                     }
-                    obj?.optBoolean("pending") == true -> {
-                        setStatus(getString(R.string.weblogin_status_verifying))
+                    is MiMoSessionVerifier.Result.Inconclusive -> {
+                        // 网络问题不等于凭证失效：不拉黑，下一轮轮询会重试
+                        flog("mimo verify inconclusive: ${result.message}")
+                        if (manual) setStatus("校验未完成：${result.message ?: "网络异常"}，请稍后重试")
                     }
-                    else -> if (manual) {
-                        toastNoSession()
-                        runDiagnostics(wv)
-                    }
+                    else -> flog("mimo verify abnormal result")
                 }
             }
-        }.onFailure { if (manual) toastNoSession() }
+        }
     }
 
     private fun extractPhCookie(cookies: String?): String? =
@@ -593,6 +678,25 @@ class WebLoginActivity : ComponentActivity() {
             ?.firstOrNull { it.startsWith("api-platform_ph=") }
             ?.substringAfter("api-platform_ph=")
             ?.takeIf { it.length > 5 }
+
+    /**
+     * 诊断：Cookie 的**名字**清单（绝不记录值）。
+     *
+     * MiMo 网页端可能同时依赖多个 Cookie（不止 api-platform_ph）。
+     * 若服务端对仅带 api-platform_ph 的请求返回 401，这份名字清单就是判断
+     * "是否需要补带其它 Cookie"的直接依据。同时输出 platform.xiaomimimo.com 之外的
+     * 域是否持有会话 Cookie（HttpOnly 的可能对 getCookie 不可见）。
+     */
+    private fun describeCookies(cookies: String?): String {
+        if (cookies.isNullOrBlank()) return "none"
+        val names = runCatching {
+            cookies.split(";").mapNotNull { seg ->
+                val eq = seg.trim().indexOf('=')
+                if (eq > 0) seg.trim().substring(0, eq) else null
+            }
+        }.getOrDefault(emptyList())
+        return "count=${names.size} names=[${names.joinToString(",")}]"
+    }
 
     /**
      * 解析 evaluateJavascript 回调。
@@ -631,20 +735,37 @@ class WebLoginActivity : ComponentActivity() {
     private fun finishWithSession(token: String, cookie: String?) {
         if (finished || isFinishing) return
         finished = true
-        if (io.github.coderirse.watchdog.BuildConfig.DEBUG) {
-            android.util.Log.d(
+        if (BuildConfig.DEBUG) {
+            DebugLog.d(
                 "WatchDogLogin",
-                "session captured: token=${token.length}c cookie=${cookie?.length ?: 0}c platform=$loginPlatform"
+                "session captured: token=${token.length}c cookie=${cookie?.length ?: 0}c " +
+                    "platform=$loginPlatform cookies=${describeCookies(cookie)} url=${webViewReady?.url}"
             )
+            if (loginPlatform == PlatformType.MIMO) {
+                // 关键判断：抓到的是不是 api-platform_ph（只记长度——前缀也是凭证片段，
+                // 违反"令牌只记长度与名字"纪律）
+                DebugLog.d(
+                    "WatchDogLogin",
+                    "mimo phToken=" +
+                        (extractPhCookie(cookie)?.let { "len=${it.length}" } ?: "NOT FOUND")
+                )
+            }
         }
         setStatus(getString(R.string.weblogin_status_captured))
         val app = application as WatchDogApplication
         lifecycleScope.launch(Dispatchers.IO) {
-            val saved = runCatching {
+            // 诊断：saveWebSession 抛异常时 runCatching 只给出 false，看不到原因，
+            // 而"登录成功但数据抓不到"往往就卡在这一步，故把异常也记下来
+            val saveResult = runCatching {
                 app.appContainer.webSessionStore.saveWebSession(loginPlatform, token, cookie)
-            }.isSuccess
+            }
+            DebugLog.d(
+                "WatchDogLogin",
+                "finishWithSession save: platform=$loginPlatform ok=${saveResult.isSuccess} " +
+                    "err=${saveResult.exceptionOrNull()?.let { it::class.java.simpleName + ": " + it.message }}"
+            )
             withContext(Dispatchers.Main) {
-                if (!saved) {
+                if (saveResult.isFailure) {
                     // 存储失败（加密/磁盘异常）：如实提示，不跳转，允许用户重试
                     finished = false
                     setStatus(getString(R.string.weblogin_status_save_failed))
@@ -660,6 +781,9 @@ class WebLoginActivity : ComponentActivity() {
                     getString(R.string.weblogin_success_toast, loginPlatform.displayName),
                     Toast.LENGTH_SHORT
                 ).show()
+                // 仪表盘用 rememberLauncherForActivityResult 拉起本页并依赖 RESULT_OK 触发刷新；
+                // 不回传结果码时，从仪表盘进来的用户会看到"会话已保存"但数据不刷新。
+                setResult(RESULT_OK)
                 // 清除登录页之上的界面（如设置页），回到主界面并导航到仪表盘
                 val main = Intent(this@WebLoginActivity, MainActivity::class.java).apply {
                     flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
@@ -788,39 +912,6 @@ class WebLoginActivity : ComponentActivity() {
         """.trimIndent()
     }
 
-    /**
-     * MiMo 凭证验证（Cookie 值由 Kotlin 侧从 CookieManager 取得后注入）：
-     * 页面内 fetch tokenPlan/detail 验证（status 200 即有效），结果经 __wdResult 两拍中转。
-     */
-    private fun mimoVerifyScript(token: String): String {
-        val t = JSONObject.quote(token)
-        return """
-        (function(){
-          try{
-            if (window.__wdResult) {
-              var r = window.__wdResult;
-              window.__wdResult = null;
-              return r;
-            }
-            if (window.__wdBusy) return {pending: true};
-            if (window.__wdWait && Date.now() < window.__wdWait) return null;
-            if (location.host !== 'platform.xiaomimimo.com') return null;
-            window.__wdBusy = true;
-            fetch('/api/v1/tokenPlan/detail', {headers: {'api-platform_ph': $t}})
-              .then(function(r){
-                window.__wdBusy = false;
-                window.__wdResult = {valid: r.status === 200};
-              })
-              .catch(function(){
-                window.__wdBusy = false;
-                window.__wdWait = Date.now() + 30000;
-              });
-            return {pending: true};
-          }catch(e){ return null; }
-        })()
-        """.trimIndent()
-    }
-
     companion object {
         const val EXTRA_PLATFORM = "platform"
 
@@ -831,6 +922,16 @@ class WebLoginActivity : ComponentActivity() {
         const val CHROME_MOBILE_UA =
             "Mozilla/5.0 (Linux; Android 15; Pixel) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
 
+        /**
+         * 界面入口（设置页 / 仪表盘重新登录按钮共用）。
+         *
+         * 注意：会话有效时进页面即自动抓取并返回——这是刻意行为（免二次输入账号）。
+         * 早期曾让 debug 构建走"停在页面手动抓取"的诊断模式，结果挡住了真实保存路径，
+         * 排查"会话没落盘"时反而看不到问题，故统一为正常模式。
+         */
+        fun uiIntent(context: Context, platform: PlatformType): Intent =
+            intent(context, platform)
+
         fun intent(context: Context, platform: PlatformType): Intent =
             Intent(context, WebLoginActivity::class.java).apply {
                 putExtra(EXTRA_PLATFORM, platform.name)
@@ -840,8 +941,7 @@ class WebLoginActivity : ComponentActivity() {
     // ===== UI =====
 
     /** 诊断脚本：输出页面域 + localStorage / sessionStorage / cookie 三处键名（不含值）。 */
-    private val JS_DIAG_KEYS = """
-        (function(){
+    private val JS_DIAG_KEYS = """        (function(){
           try{
             function keysOf(st){
               var a = [];

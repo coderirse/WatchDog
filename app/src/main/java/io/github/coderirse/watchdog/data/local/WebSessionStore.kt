@@ -5,6 +5,7 @@ import android.content.SharedPreferences
 import androidx.core.content.edit
 import io.github.coderirse.watchdog.data.model.PlatformType
 import io.github.coderirse.watchdog.data.repository.WebSessionAccess
+import io.github.coderirse.watchdog.util.DebugLog
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -38,12 +39,38 @@ class WebSessionStore(context: Context) : WebSessionAccess {
 
     suspend fun saveWebSession(platform: PlatformType, token: String, cookie: String? = null) {
         withContext(Dispatchers.IO) {
-            prefs.edit {
-                putString(tokenKey(platform), SecureCipher.encrypt(token))
-                if (cookie != null) putString(cookieKey(platform), SecureCipher.encrypt(cookie))
-            }
-            if (SecureCipher.lastDegraded) {
-                settingsPrefs.edit { putBoolean("encryption_degraded", true) }
+            val storedToken = SecureCipher.encrypt(token)
+            val storedCookie = cookie?.let { SecureCipher.encrypt(it) }
+            // 诊断：会话保存是"登录成功但抓不到数据"最可疑的一环，
+            // 必须能看出写入了什么（只记长度与键名，绝不记凭证明文）
+            DebugLog.d(
+                TAG,
+                "saveWebSession ${platform.name}: tokenPlain=${token.length} " +
+                    "tokenStored=${storedToken.length} cookiePlain=${cookie?.length ?: 0} " +
+                    "cookieStored=${storedCookie?.length ?: 0} degraded=${SecureCipher.isDegraded(storedToken, token)}"
+            )
+            val committed = prefs.edit().apply {
+                putString(tokenKey(platform), storedToken)
+                if (storedCookie != null) {
+                    putString(cookieKey(platform), storedCookie)
+                } else {
+                    // 本次未携带 Cookie（如手动粘贴 token 的换账号路径）必须清掉旧 Cookie：
+                    // 残留的旧账号 Cookie 会与新 token 混发，网关按整串 Cookie 判定登录态，
+                    // 要么 401"会话已过期"，要么按 Cookie 识别返回旧账号数据
+                    remove(cookieKey(platform))
+                }
+            }.commit()
+            DebugLog.d(
+                TAG,
+                "saveWebSession ${platform.name}: committed=$committed " +
+                    "readBack=${prefs.getString(tokenKey(platform), null)?.length ?: -1}"
+            )
+            // 降级判定基于本次返回值与明文的比较（见 SecureCipher.isDegraded），
+            // 不用全局标志，避免多平台并行保存时的竞态把告警清掉
+            if (SecureCipher.isDegraded(storedToken, token) ||
+                (cookie != null && storedCookie != null && SecureCipher.isDegraded(storedCookie, cookie))
+            ) {
+                settingsPrefs.edit { putBoolean(SettingsStore.KEY_ENCRYPTION_DEGRADED, true) }
             }
         }
     }
@@ -57,16 +84,80 @@ class WebSessionStore(context: Context) : WebSessionAccess {
         }
     }
 
+    /**
+     * 彻底清除某平台的网页会话：加密凭证 + Kimi 控制台快照 + **该平台域的 WebView 登录态**
+     * （Cookie 与 localStorage/sessionStorage）。
+     *
+     * 为什么必须连 WebView 一起清：登录页复用的是持久化登录态，
+     * 只删我们自己的加密存储而不清 WebView，用户重新打开登录页时会**自动带着旧账号登录态**
+     * 被秒抓凭证——表现为"无法换账号"（用户实机反馈的真实缺口）。
+     *
+     * 只按平台自己的域清理（[android.webkit.WebStorage.deleteOrigin]），刻意不用
+     * `deleteAllData()`：后者会连带清掉其它平台的 WebView 登录态，
+     * 用户只想换一个平台却发现其它平台也要重新登录。
+     */
+    suspend fun removeWebSessionFully(platform: PlatformType) {
+        removeWebSession(platform)
+        if (platform == PlatformType.KIMI) {
+            withContext(Dispatchers.IO) { prefs.edit { remove(snapshotKey(platform)) } }
+        }
+        val origin = platform.consoleOrigin() ?: return
+        withContext(Dispatchers.Main) {
+            runCatching {
+                val cookieManager = android.webkit.CookieManager.getInstance()
+                // CookieManager 没有"按域删除"的 API。旧实现 removeAllCookies(null) 清掉
+                // 所有域的 Cookie——换一个平台的账号会连带登出其它平台的 WebView 登录态，
+                // 与本法注释宣称的"只按平台自己的域清理"相矛盾。改为枚举平台域（含共享
+                // 父域）可见的 Cookie 逐条置过期删除；跨根域的账号体系 Cookie 与
+                // 非根路径 Cookie 不在 best-effort 清理范围内。
+                val host = runCatching { java.net.URI(origin).host }.getOrNull()
+                val urls = buildList {
+                    add(origin)
+                    if (host != null && host.count { it == '.' } >= 2) {
+                        add(origin.replaceFirst(host, host.substringAfter('.')))
+                    }
+                }
+                for (url in urls) {
+                    val cookieHeader = cookieManager.getCookie(url) ?: continue
+                    for (pair in cookieHeader.split(";")) {
+                        val name = pair.substringBefore('=').trim()
+                        if (name.isEmpty()) continue
+                        cookieManager.setCookie(
+                            url,
+                            "$name=; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Max-Age=0"
+                        )
+                    }
+                }
+                cookieManager.flush()
+                android.webkit.WebStorage.getInstance().deleteOrigin(origin)
+            }
+        }
+    }
+
+    /** 该平台网页控制台的源（供清除 WebView 登录态用）；不支持会话的平台返回 null。 */
+    private fun PlatformType.consoleOrigin(): String? = when (this) {
+        PlatformType.MIMO -> "https://platform.xiaomimimo.com"
+        PlatformType.DEEPSEEK -> "https://platform.deepseek.com"
+        PlatformType.KIMI -> "https://platform.kimi.com"
+        else -> null
+    }
+
     /** 读取网页会话令牌；未配置或解密失败返回 null。 */
-    suspend fun getWebSession(platform: PlatformType): String? {
+    override suspend fun getWebSession(platform: PlatformType): String? {
         return withContext(Dispatchers.IO) {
             val stored = prefs.getString(tokenKey(platform), "") ?: ""
-            stored.ifBlank { null }?.let { SecureCipher.decrypt(it) }?.ifBlank { null }
+            val plain = stored.ifBlank { null }?.let { SecureCipher.decrypt(it) }?.ifBlank { null }
+            DebugLog.d(
+                TAG,
+                "getWebSession ${platform.name}: storedLen=${stored.length} " +
+                    "decryptedLen=${plain?.length ?: -1}"
+            )
+            plain
         }
     }
 
     /** 读取随会话保存的浏览器 Cookie 串（WAF 指纹用）；未保存返回 null。 */
-    suspend fun getWebSessionCookie(platform: PlatformType): String? {
+    override suspend fun getWebSessionCookie(platform: PlatformType): String? {
         return withContext(Dispatchers.IO) {
             val stored = prefs.getString(cookieKey(platform), "") ?: ""
             stored.ifBlank { null }?.let { SecureCipher.decrypt(it) }?.ifBlank { null }
@@ -91,7 +182,11 @@ class WebSessionStore(context: Context) : WebSessionAccess {
                 .put("month", month ?: "")
                 .put("total", total ?: "")
                 .toString()
-            prefs.edit { putString(snapshotKey(PlatformType.KIMI), SecureCipher.encrypt(json)) }
+            val stored = SecureCipher.encrypt(json)
+            prefs.edit { putString(snapshotKey(PlatformType.KIMI), stored) }
+            if (SecureCipher.isDegraded(stored, json)) {
+                settingsPrefs.edit { putBoolean(SettingsStore.KEY_ENCRYPTION_DEGRADED, true) }
+            }
         }
     }
 
@@ -113,4 +208,8 @@ class WebSessionStore(context: Context) : WebSessionAccess {
     private fun snapshotKey(platform: PlatformType): String = "web_session_snapshot_${platform.name}"
 
     data class KimiSnapshot(val balance: String?, val month: String?, val total: String?)
+
+    private companion object {
+        const val TAG = "WatchDogSession"
+    }
 }

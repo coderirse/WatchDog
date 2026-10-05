@@ -1,0 +1,19 @@
+# 统一换行符：仓库内文本文件一律以 LF 存储，避免 Windows/Linux 之间来回转换产生
+# 整文件级 diff（此前缺少该文件，core.autocrlf=true 的机器上会出现 "LF will be replaced
+# by CRLF" 警告与无意义的行尾改动）。
+* text=auto eol=lf
+
+# 二进制 / 归档文件不做换行转换
+*.apk binary
+*.jar binary
+*.keystore binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.ttf binary
+*.otf binary
+
+# Gradle Wrapper 脚本在 Windows 上按 CRLF 保留
+*.bat text eol=crlf
+gradlew text eol=lf

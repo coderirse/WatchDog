@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <!--
+      网页登录页深色覆盖：只重声明基础名，代码统一引用 R.color.wd_login_*，
+      系统处于深色模式时这些值自动生效（无需代码里判断 uiMode）。
+      *_night 后缀名不在本文件重复声明，避免与 values/colors.xml 产生歧义。
+    -->
+
+    <color name="wd_login_chrome_bg">#0F172A</color>
+    <color name="wd_login_title_text">#F1F5F9</color>
+    <color name="wd_login_sub_text">#94A3B8</color>
+    <color name="wd_login_outlined_bg">#334155</color>
+    <color name="wd_login_outlined_text">#E2E8F0</color>
+    <color name="wd_login_primary">#1E3A8A</color>
+
+</resources>

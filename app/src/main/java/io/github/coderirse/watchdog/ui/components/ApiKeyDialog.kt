@@ -7,7 +7,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -36,6 +35,7 @@ fun ApiKeyDialog(
     onSave: (platform: PlatformType, apiKey: String) -> Unit,
     onSaveWebSession: (platform: PlatformType, token: String) -> Unit,
     onOpenWebLogin: (platform: PlatformType) -> Unit = {},
+    onClearWebSession: (platform: PlatformType) -> Unit = {},
     onDelete: (platform: PlatformType) -> Unit
 ) {
     var apiKeyInput by remember { mutableStateOf(currentApiKey) }
@@ -55,124 +55,129 @@ fun ApiKeyDialog(
         }
     }
 
-    AlertDialog(
+    AnimatedDialog(
         onDismissRequest = onDismiss,
         icon = {
             PlatformLogo(platform = platform, size = 40)
         },
-        title = {
-            Text(
-                text = stringResource(R.string.apikey_dialog_title, platform.displayName),
-                style = MaterialTheme.typography.titleMedium
-            )
-        },
-        text = {
-            Column(
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text(
-                    text = stringResource(R.string.apikey_dialog_desc, platform.displayName),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Spacer(modifier = Modifier.height(12.dp))
-                OutlinedTextField(
-                    value = apiKeyInput,
-                    onValueChange = { apiKeyInput = it },
-                    label = { Text("API Key") },
-                    placeholder = { Text(stringResource(R.string.apikey_dialog_placeholder)) },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                    visualTransformation = PasswordVisualTransformation(),
-                    keyboardOptions = KeyboardOptions(
-                        keyboardType = KeyboardType.Password,
-                        imeAction = if (platform.supportsConsoleSession) ImeAction.Next else ImeAction.Done
-                    ),
-                    keyboardActions = KeyboardActions(
-                        onDone = { submit() }
-                    )
-                )
-                if (currentApiKey.isNotEmpty()) {
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = stringResource(R.string.apikey_dialog_current),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.outline
-                    )
-                }
-
-                // 支持网页控制台会话的平台（小米 MiMo 必需 / DeepSeek 可选增强）：
-                // 推荐通过内嵌登录页获取会话（支持密码/短信验证码登录，凭证自动抓取加密保存）；
-                // 手动粘贴令牌作为备选。
-                if (platform.supportsConsoleSession) {
-                    val sessionDesc = when (platform) {
-                        PlatformType.MIMO ->
-                            stringResource(R.string.apikey_dialog_session_desc_mimo, platform.displayName)
-                        PlatformType.DEEPSEEK ->
-                            stringResource(R.string.apikey_dialog_session_desc_deepseek, platform.displayName)
-                        else -> ""
-                    }
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Text(
-                        text = sessionDesc,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    OutlinedButton(
-                        onClick = { onOpenWebLogin(platform) },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text(stringResource(R.string.apikey_dialog_open_weblogin, platform.displayName))
-                    }
-                    Spacer(modifier = Modifier.height(8.dp))
-                    OutlinedTextField(
-                        value = sessionInput,
-                        onValueChange = { sessionInput = it },
-                        label = { Text(stringResource(R.string.apikey_dialog_session_label)) },
-                        placeholder = { Text(stringResource(R.string.apikey_dialog_session_placeholder)) },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth(),
-                        visualTransformation = PasswordVisualTransformation(),
-                        keyboardOptions = KeyboardOptions(
-                            keyboardType = KeyboardType.Password,
-                            imeAction = ImeAction.Done
-                        ),
-                        keyboardActions = KeyboardActions(onDone = { submit() })
-                    )
-                    if (sessionConfigured) {
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            text = stringResource(R.string.apikey_dialog_session_current),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.outline
-                        )
-                    }
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(
-                onClick = { submit() },
-                enabled = canSave
-            ) {
-                Text(stringResource(R.string.action_save))
-            }
-        },
-        dismissButton = {
+        title = stringResource(R.string.apikey_dialog_title, platform.displayName),
+        buttons = { closer ->
             Row {
                 if (currentApiKey.isNotEmpty()) {
-                    TextButton(onClick = { onDelete(platform) }) {
+                    TextButton(onClick = { closer.dismiss { onDelete(platform) } }) {
                         Text(
                             text = stringResource(R.string.action_delete),
                             color = MaterialTheme.colorScheme.error
                         )
                     }
                 }
-                TextButton(onClick = onDismiss) {
+                TextButton(onClick = { closer.dismiss() }) {
                     Text(stringResource(R.string.action_cancel))
                 }
             }
+            TextButton(
+                onClick = { closer.dismiss { submit() } },
+                enabled = canSave
+            ) {
+                Text(stringResource(R.string.action_save))
+            }
         }
-    )
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text(
+                text = stringResource(R.string.apikey_dialog_desc, platform.displayName),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            OutlinedTextField(
+                value = apiKeyInput,
+                onValueChange = { apiKeyInput = it },
+                label = { Text(stringResource(R.string.apikey_dialog_key_label)) },
+                placeholder = { Text(stringResource(R.string.apikey_dialog_placeholder)) },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+                visualTransformation = PasswordVisualTransformation(),
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = KeyboardType.Password,
+                    imeAction = if (platform.supportsConsoleSession) ImeAction.Next else ImeAction.Done
+                ),
+                keyboardActions = KeyboardActions(
+                    onDone = { submit() }
+                )
+            )
+            if (currentApiKey.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = stringResource(R.string.apikey_dialog_current),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.outline
+                )
+            }
+
+            // 支持网页控制台会话的平台（小米 MiMo 必需 / DeepSeek 可选增强）：
+            // 推荐通过内嵌登录页获取会话（支持密码/短信验证码登录，凭证自动抓取加密保存）；
+            // 手动粘贴令牌作为备选。
+            if (platform.supportsConsoleSession) {
+                val sessionDesc = when (platform) {
+                    PlatformType.MIMO ->
+                        stringResource(R.string.apikey_dialog_session_desc_mimo, platform.displayName)
+                    PlatformType.DEEPSEEK ->
+                        stringResource(R.string.apikey_dialog_session_desc_deepseek, platform.displayName)
+                    else -> ""
+                }
+                Spacer(modifier = Modifier.height(12.dp))
+                Text(
+                    text = sessionDesc,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedButton(
+                    onClick = { onOpenWebLogin(platform) },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(stringResource(R.string.apikey_dialog_open_weblogin, platform.displayName))
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = sessionInput,
+                    onValueChange = { sessionInput = it },
+                    label = { Text(stringResource(R.string.apikey_dialog_session_label)) },
+                    placeholder = { Text(stringResource(R.string.apikey_dialog_session_placeholder)) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Password,
+                        imeAction = ImeAction.Done
+                    ),
+                    keyboardActions = KeyboardActions(onDone = { submit() })
+                )
+                if (sessionConfigured) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = stringResource(R.string.apikey_dialog_session_current),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.outline
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    // 换账号的唯一入口：清除加密凭证 **并** 清掉登录页 WebView 的
+                    // Cookie/localStorage（否则下次打开登录页会自动带旧账号登录态）
+                    TextButton(
+                        onClick = { onClearWebSession(platform) },
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)
+                    ) {
+                        Text(
+                            text = stringResource(R.string.apikey_dialog_session_clear),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
+                }
+            }
+        }
+    }
 }

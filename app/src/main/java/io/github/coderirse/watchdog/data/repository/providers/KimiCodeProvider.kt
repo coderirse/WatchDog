@@ -25,14 +25,14 @@ class KimiCodeProvider(
         val response = kimiCodeApi.getUsages("Bearer $apiKey")
         if (!response.isSuccessful) return ProviderSupport.httpError(platform, response.code())
 
-        val body = response.body() ?: return QuotaInfo.error(platform, "响应为空")
+        val body = response.body() ?: return ProviderSupport.emptyResponse(platform)
         val planName = KimiCodeParser.parsePlanName(body.plan)
         val windows = body.windows?.map { KimiCodeParser.parseWindow(it) } ?: emptyList()
         // 注：顶层 expiresAt/resetTime 无法归属到具体窗口，暂不使用
 
         if (planName == null && windows.isEmpty()) {
             // HTTP 200 但解析不到任何可识别字段：接口结构很可能已变更
-            return QuotaInfo.error(platform, "响应格式无法识别，接口可能已变更")
+            return ProviderSupport.unrecognizedResponse(platform)
         }
 
         return QuotaInfo(

@@ -20,11 +20,10 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Warning
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
@@ -34,7 +33,6 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
@@ -44,6 +42,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -55,18 +54,19 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import io.github.coderirse.watchdog.ui.weblogin.WebLoginActivity
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import io.github.coderirse.watchdog.R
 import io.github.coderirse.watchdog.di.LocalAppContainer
 import io.github.coderirse.watchdog.data.model.PlatformType
 import io.github.coderirse.watchdog.ui.components.ApiKeyDialog
+import io.github.coderirse.watchdog.ui.components.ListDivider
 import io.github.coderirse.watchdog.ui.components.PlatformLogo
+import io.github.coderirse.watchdog.ui.components.SectionHeader
 import io.github.coderirse.watchdog.ui.theme.WatchDogTheme
-import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -75,13 +75,26 @@ fun SettingsScreen(
 ) {
     val appContainer = LocalAppContainer.current
     val viewModel: SettingsViewModel = viewModel(factory = SettingsViewModel.factory(appContainer))
-    val uiState by viewModel.uiState.collectAsState()
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
+
+    // 预警已开启但系统通知权限缺失/被拒：通知会静默丢弃，必须显式告知用户并提供系统设置入口
+    var notificationPermissionGranted by remember { mutableStateOf(true) }
 
     // 开启余额预警时，在 Android 13+ 请求通知权限；未授权时通知会静默跳过
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
-    ) { /* 结果无需处理 */ }
+    ) { granted -> notificationPermissionGranted = granted }
+
+    LaunchedEffect(uiState.balanceAlertEnabled) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            notificationPermissionGranted = ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.POST_NOTIFICATIONS
+            ) == PackageManager.PERMISSION_GRANTED
+        }
+    }
+    val notificationsBlocked = uiState.balanceAlertEnabled && !notificationPermissionGranted
 
     fun requestNotificationPermissionIfNeeded() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
@@ -105,7 +118,19 @@ fun SettingsScreen(
             if (enabled) requestNotificationPermissionIfNeeded()
         },
         onEditBalanceThreshold = { viewModel.showBalanceThresholdDialog() },
-        onEditBalanceFraction = { viewModel.showBalanceFractionDialog() }
+        onEditBalanceFraction = { viewModel.showBalanceFractionDialog() },
+        notificationsBlocked = notificationsBlocked,
+        onOpenNotificationSettings = {
+            runCatching {
+                context.startActivity(
+                    android.content.Intent(
+                        android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS
+                    ).apply {
+                        putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, context.packageName)
+                    }
+                )
+            }
+        }
     )
 
     uiState.showApiKeyDialog?.let { platform ->
@@ -123,8 +148,10 @@ fun SettingsScreen(
             onSave = { p, key -> viewModel.saveApiKey(p, key) },
             onSaveWebSession = { p, token -> viewModel.saveWebSession(p, token) },
             onOpenWebLogin = { p ->
-                context.startActivity(WebLoginActivity.intent(context, p))
+                // uiIntent：debug 构建为诊断模式（会话有效时不会自动抓取返回，可停留观察）
+                context.startActivity(WebLoginActivity.uiIntent(context, p))
             },
+            onClearWebSession = { p -> viewModel.clearWebSession(p) },
             onDelete = { p -> viewModel.deleteApiKey(p) }
         )
     }
@@ -168,7 +195,9 @@ fun SettingsContent(
     onEditInitialBalance: () -> Unit,
     onToggleBalanceAlert: (Boolean) -> Unit,
     onEditBalanceThreshold: () -> Unit,
-    onEditBalanceFraction: () -> Unit
+    onEditBalanceFraction: () -> Unit,
+    notificationsBlocked: Boolean = false,
+    onOpenNotificationSettings: () -> Unit = {}
 ) {
     Scaffold(
         topBar = {
@@ -195,6 +224,13 @@ fun SettingsContent(
             if (uiState.encryptionDegraded) {
                 item(key = "encryption_warning") {
                     EncryptionWarningCard()
+                }
+            }
+
+            // 预警已开启但系统通知被拒：明确告知，否则用户以为预警在生效
+            if (notificationsBlocked) {
+                item(key = "notification_blocked") {
+                    NotificationBlockedCard(onOpenNotificationSettings)
                 }
             }
 
@@ -246,28 +282,17 @@ fun SettingsContent(
     }
 }
 
-@Composable
-private fun SectionHeader(title: String) {
-    Text(
-        text = title,
-        style = MaterialTheme.typography.titleSmall,
-        color = MaterialTheme.colorScheme.primary,
-        fontWeight = FontWeight.Bold,
-        modifier = Modifier.padding(start = 4.dp, top = 4.dp)
-    )
-}
-
 // ===== 平台配置卡 =====
 
-@Composable
-private fun consoleHost(platform: PlatformType): String = when (platform) {
-    PlatformType.DEEPSEEK -> stringResource(R.string.settings_console_deepseek)
-    PlatformType.KIMI -> stringResource(R.string.settings_console_kimi)
-    PlatformType.GLM -> stringResource(R.string.settings_console_glm)
-    PlatformType.SILICONFLOW -> stringResource(R.string.settings_console_siliconflow)
-    PlatformType.VOLCENGINE_ARK -> stringResource(R.string.settings_console_volcengine)
-    PlatformType.KIMI_CODE -> stringResource(R.string.settings_console_kimi_code)
-    PlatformType.MIMO -> stringResource(R.string.settings_console_mimo)
+/** 控制台主机名 → 字符串资源 id（普通函数；原 `@Composable fun` 返回 String 是反模式）。 */
+private fun consoleHostRes(platform: PlatformType): Int = when (platform) {
+    PlatformType.DEEPSEEK -> R.string.settings_console_deepseek
+    PlatformType.KIMI -> R.string.settings_console_kimi
+    PlatformType.GLM -> R.string.settings_console_glm
+    PlatformType.SILICONFLOW -> R.string.settings_console_siliconflow
+    PlatformType.VOLCENGINE_ARK -> R.string.settings_console_volcengine
+    PlatformType.KIMI_CODE -> R.string.settings_console_kimi_code
+    PlatformType.MIMO -> R.string.settings_console_mimo
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -280,13 +305,19 @@ private fun PlatformSettingsCard(
 ) {
     val platform = platformState.platform
     val hasKey = platformState.apiKey.isNotEmpty()
+    val canEnable = hasKey || platformState.webSessionConfigured
+    val host = stringResource(consoleHostRes(platform))
+    val ctx = LocalContext.current
 
-    Card(
-        onClick = onClick,
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+    Card(onClick = onClick, modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp)) {
+            // 标题行：整卡唯一的"可点击"信号是尾部 chevron，避免用户看不出能点开配置
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 PlatformLogo(platform = platform, size = 32)
                 Spacer(modifier = Modifier.width(12.dp))
                 Column(modifier = Modifier.weight(1f)) {
@@ -307,21 +338,20 @@ private fun PlatformSettingsCard(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
-                Switch(
-                    checked = platformState.isEnabled,
-                    onCheckedChange = onToggleEnabled,
-                    enabled = hasKey || platformState.webSessionConfigured
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                    contentDescription = stringResource(
+                        R.string.settings_edit_platform,
+                        platform.displayName
+                    ),
+                    tint = MaterialTheme.colorScheme.outline
                 )
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
-            val host = consoleHost(platform)
-            val ctx = LocalContext.current
-            Text(
-                text = stringResource(R.string.settings_create_key_hint, host),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.clickable {
+            Spacer(modifier = Modifier.height(6.dp))
+            // 外链改为 TextButton：原来的纯文字 clickable 热区仅约 16dp 高
+            TextButton(
+                onClick = {
                     runCatching {
                         ctx.startActivity(
                             android.content.Intent(
@@ -330,25 +360,61 @@ private fun PlatformSettingsCard(
                             )
                         )
                     }
-                }
-            )
+                },
+                modifier = Modifier.padding(start = 8.dp)
+            ) {
+                Text(
+                    text = stringResource(R.string.settings_create_key_hint, host),
+                    style = MaterialTheme.typography.labelMedium
+                )
+            }
 
             if (platform == PlatformType.KIMI_CODE) {
-                Spacer(modifier = Modifier.height(2.dp))
                 Text(
                     text = stringResource(R.string.settings_kimi_code_independent),
                     style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.outline
+                    color = MaterialTheme.colorScheme.outline,
+                    modifier = Modifier.padding(horizontal = 16.dp)
+                )
+            }
+
+            Spacer(modifier = Modifier.height(6.dp))
+            ListDivider(leadingInset = 16.dp)
+
+            // 开关独立成行：避免与整卡点击区嵌套（误触 + 读屏语义冲突）
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = stringResource(R.string.settings_enable_switch),
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.weight(1f)
+                )
+                Switch(
+                    checked = platformState.isEnabled,
+                    onCheckedChange = onToggleEnabled,
+                    enabled = canEnable
+                )
+            }
+            if (!canEnable) {
+                Text(
+                    text = stringResource(R.string.settings_switch_disabled_hint),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.outline,
+                    modifier = Modifier.padding(horizontal = 16.dp)
                 )
             }
 
             // 网页控制台会话配置（小米 MiMo 必需；DeepSeek 可选增强）
             if (platform.supportsConsoleSession) {
-                Spacer(modifier = Modifier.height(10.dp))
-                HorizontalDivider()
-                Spacer(modifier = Modifier.height(10.dp))
+                ListDivider(leadingInset = 16.dp)
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 16.dp, end = 8.dp, top = 4.dp, bottom = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
@@ -376,7 +442,6 @@ private fun PlatformSettingsCard(
                         Text(stringResource(R.string.settings_console_session_edit))
                     }
                 }
-                Spacer(modifier = Modifier.height(2.dp))
                 Text(
                     text = if (platform == PlatformType.MIMO) {
                         stringResource(R.string.settings_mimo_session_desc)
@@ -384,16 +449,17 @@ private fun PlatformSettingsCard(
                         stringResource(R.string.settings_deepseek_session_desc)
                     },
                     style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.outline
+                    color = MaterialTheme.colorScheme.outline,
+                    modifier = Modifier.padding(horizontal = 16.dp)
                 )
             }
 
             if (platform == PlatformType.VOLCENGINE_ARK) {
-                Spacer(modifier = Modifier.height(10.dp))
-                HorizontalDivider()
-                Spacer(modifier = Modifier.height(10.dp))
+                ListDivider(leadingInset = 16.dp)
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 16.dp, end = 8.dp, top = 4.dp, bottom = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
@@ -414,11 +480,11 @@ private fun PlatformSettingsCard(
                         Text(stringResource(R.string.settings_ark_edit_balance))
                     }
                 }
-                Spacer(modifier = Modifier.height(2.dp))
                 Text(
                     text = stringResource(R.string.settings_ark_initial_balance_desc),
                     style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.outline
+                    color = MaterialTheme.colorScheme.outline,
+                    modifier = Modifier.padding(horizontal = 16.dp)
                 )
             }
         }
@@ -541,6 +607,41 @@ private fun EncryptionWarningCard() {
     }
 }
 
+// ===== 通知权限缺失告警卡 =====
+
+/**
+ * 预警开关已开但系统通知权限缺失：原实现只在开启瞬间请求一次权限，
+ * 用户拒绝后通知会被静默丢弃而界面毫无提示，这里补上说明与系统设置入口。
+ */
+@Composable
+private fun NotificationBlockedCard(onOpenSettings: () -> Unit) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
+    ) {
+        Row(
+            modifier = Modifier.padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = Icons.Filled.Warning,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onErrorContainer,
+                modifier = Modifier.size(20.dp)
+            )
+            Spacer(modifier = Modifier.width(10.dp))
+            Text(
+                text = stringResource(R.string.settings_notification_denied),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onErrorContainer,
+                modifier = Modifier
+                    .weight(1f)
+                    .clickable(onClick = onOpenSettings)
+            )
+        }
+    }
+}
+
 // ===== 余额预警卡 =====
 
 @Composable
@@ -627,179 +728,7 @@ private fun ThresholdRow(label: String, value: String, onEdit: () -> Unit) {
     }
 }
 
-private fun formatThreshold(value: Double): String {
-    return if (value == value.toLong().toDouble()) {
-        value.toLong().toString()
-    } else {
-        String.format(Locale.US, "%.2f", value)
-    }
-}
-
-// ===== 余额预警阈值弹窗 =====
-
-@Composable
-private fun BalanceThresholdDialog(
-    currentThreshold: Double,
-    onDismiss: () -> Unit,
-    onSave: (Double) -> Unit
-) {
-    var input by remember { mutableStateOf(formatThreshold(currentThreshold)) }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = {
-            Text(
-                text = stringResource(R.string.balance_threshold_dialog_title),
-                style = MaterialTheme.typography.titleMedium
-            )
-        },
-        text = {
-            Column(modifier = Modifier.fillMaxWidth()) {
-                Text(
-                    text = stringResource(R.string.balance_threshold_dialog_desc),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Spacer(modifier = Modifier.height(12.dp))
-                OutlinedTextField(
-                    value = input,
-                    onValueChange = { input = it },
-                    label = { Text(stringResource(R.string.balance_threshold_label)) },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
-                )
-            }
-        },
-        confirmButton = {
-            TextButton(
-                onClick = { input.toDoubleOrNull()?.let(onSave) },
-                enabled = input.toDoubleOrNull()?.let { it >= 0.0 } == true
-            ) {
-                Text(stringResource(R.string.action_save))
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text(stringResource(R.string.action_cancel))
-            }
-        }
-    )
-}
-
-// ===== 余额预警比例阈值弹窗 =====
-
-@Composable
-private fun BalanceFractionDialog(
-    currentFraction: Double,
-    onDismiss: () -> Unit,
-    onSave: (Double) -> Unit
-) {
-    var input by remember { mutableStateOf(formatThreshold(currentFraction)) }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = {
-            Text(
-                text = stringResource(R.string.balance_fraction_dialog_title),
-                style = MaterialTheme.typography.titleMedium
-            )
-        },
-        text = {
-            Column(modifier = Modifier.fillMaxWidth()) {
-                Text(
-                    text = stringResource(R.string.balance_fraction_dialog_desc),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Spacer(modifier = Modifier.height(12.dp))
-                OutlinedTextField(
-                    value = input,
-                    onValueChange = { input = it },
-                    label = { Text(stringResource(R.string.balance_fraction_label)) },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
-                )
-            }
-        },
-        confirmButton = {
-            TextButton(
-                onClick = { input.toDoubleOrNull()?.let(onSave) },
-                enabled = input.toDoubleOrNull()?.let { it in 0.0..100.0 } == true
-            ) {
-                Text(stringResource(R.string.action_save))
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text(stringResource(R.string.action_cancel))
-            }
-        }
-    )
-}
-
-// ===== 火山方舟初始余额弹窗 =====
-
-@Composable
-private fun InitialBalanceDialog(
-    currentBalance: Double?,
-    onDismiss: () -> Unit,
-    onSave: (Double?) -> Unit
-) {
-    var input by remember { mutableStateOf(currentBalance?.toString() ?: "") }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = {
-            Text(
-                text = stringResource(R.string.initial_balance_dialog_title),
-                style = MaterialTheme.typography.titleMedium
-            )
-        },
-        text = {
-            Column(modifier = Modifier.fillMaxWidth()) {
-                Text(
-                    text = stringResource(R.string.initial_balance_dialog_desc),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Spacer(modifier = Modifier.height(12.dp))
-                OutlinedTextField(
-                    value = input,
-                    onValueChange = { input = it },
-                    label = { Text(stringResource(R.string.initial_balance_label)) },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
-                )
-            }
-        },
-        confirmButton = {
-            TextButton(
-                onClick = { input.toDoubleOrNull()?.let(onSave) },
-                enabled = input.toDoubleOrNull() != null
-            ) {
-                Text(stringResource(R.string.action_save))
-            }
-        },
-        dismissButton = {
-            Row {
-                if (currentBalance != null) {
-                    TextButton(onClick = { onSave(null) }) {
-                        Text(
-                            text = stringResource(R.string.action_clear),
-                            color = MaterialTheme.colorScheme.error
-                        )
-                    }
-                }
-                TextButton(onClick = onDismiss) {
-                    Text(stringResource(R.string.action_cancel))
-                }
-            }
-        }
-    )
-}
+// 余额预警阈值 / 比例阈值 / 初始余额弹窗已抽到 SettingsDialogs.kt
 
 // ===== Preview =====
 

@@ -15,12 +15,23 @@ import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 
+/**
+ * 检查更新结果（结构化，不携带 UI 文案）：
+ * 此前 VM 直接产出中文字符串，无法本地化；文案由 MoreScreen 按 [MoreUiState.checkResult] 类型解析。
+ */
+sealed interface MoreCheckResult {
+    data object Checking : MoreCheckResult
+    data class UpToDate(val version: String) : MoreCheckResult
+    data class UpdateAvailable(val latestVersion: String) : MoreCheckResult
+    data class Failed(val reason: String?) : MoreCheckResult
+}
+
 data class MoreUiState(
     val currentVersion: String = "",
     val latestVersion: String? = null,
     val hasUpdate: Boolean = false,
     val isChecking: Boolean = false,
-    val checkResult: String = ""
+    val checkResult: MoreCheckResult? = null
 )
 
 class MoreViewModel(application: Application) : AndroidViewModel(application) {
@@ -38,7 +49,7 @@ class MoreViewModel(application: Application) : AndroidViewModel(application) {
     fun checkForUpdate() {
         if (_uiState.value.isChecking) return
         viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(isChecking = true, checkResult = "正在检查...")
+            _uiState.value = _uiState.value.copy(isChecking = true, checkResult = MoreCheckResult.Checking)
             try {
                 val latest = fetchLatestVersion()
                 val current = appVersion
@@ -47,15 +58,18 @@ class MoreViewModel(application: Application) : AndroidViewModel(application) {
                     latestVersion = latest,
                     hasUpdate = hasUpdate,
                     isChecking = false,
-                    checkResult = if (hasUpdate) "发现新版本 v$latest，请前往 GitHub 下载"
-                    else "已是最新版本 v$current"
+                    checkResult = if (hasUpdate) {
+                        MoreCheckResult.UpdateAvailable(latest)
+                    } else {
+                        MoreCheckResult.UpToDate(current)
+                    }
                 )
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {
                 _uiState.value = _uiState.value.copy(
                     isChecking = false,
-                    checkResult = "检查失败: ${e.localizedMessage ?: "网络错误"}"
+                    checkResult = MoreCheckResult.Failed(e.localizedMessage)
                 )
             }
         }

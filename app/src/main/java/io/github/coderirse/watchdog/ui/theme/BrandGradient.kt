@@ -45,6 +45,14 @@ fun brandBrush(brandColor: Color): Brush = Brush.linearGradient(
 )
 
 /**
+ * 趋势图柱色：主色 → 压暗的纵向渐变，与 [brandBrush] 同色系，
+ * 用于 Hero 卡内的余额趋势柱（避免引入新的配色语言）。
+ */
+fun trendBarBrush(color: Color): Brush = Brush.verticalGradient(
+    colors = listOf(color, color.darkened(0.75f))
+)
+
+/**
  * 低余额预警渐变：品牌色向深琥珀过渡（原亮橙上白字对比度不足，已压暗）。
  */
 fun warningBlendBrush(brandColor: Color): Brush = Brush.linearGradient(

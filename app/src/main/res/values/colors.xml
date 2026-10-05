@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <!--
+      网页登录页（WebLoginActivity，纯 View 实现）主题令牌。
+      基础名(lights)与 *_night 变体成对定义；实际使用时只引用基础名，
+      深色模式由 values-night/colors.xml 自动接管（见该文件）。
+    -->
+
+    <!-- 页面 Chrome 背景：顶部标题区 / 底部按钮行。
+         light 对应 MaterialTheme surface #FFFFFFFF -->
+    <color name="wd_login_chrome_bg">#FFFFFF</color>
+    <color name="wd_login_chrome_bg_night">#0F172A</color>
+
+    <!-- 标题文字 -->
+    <color name="wd_login_title_text">#000000</color>
+    <color name="wd_login_title_text_night">#F1F5F9</color>
+
+    <!-- 副标题 / 状态行文字（次要文字色） -->
+    <color name="wd_login_sub_text">#808080</color>
+    <color name="wd_login_sub_text_night">#94A3B8</color>
+
+    <!-- "取消"按钮填充色 -->
+    <color name="wd_login_outlined_bg">#EEEEF2</color>
+    <color name="wd_login_outlined_bg_night">#334155</color>
+
+    <!-- "取消"按钮文字色 -->
+    <color name="wd_login_outlined_text">#000000</color>
+    <color name="wd_login_outlined_text_night">#E2E8F0</color>
+
+    <!-- 主按钮（读取凭证）填充色：与 ui/theme/Color.kt 的 BrandIndigo 一致（0xFF1E3A8A） -->
+    <color name="wd_login_primary">#1E3A8A</color>
+
+</resources>

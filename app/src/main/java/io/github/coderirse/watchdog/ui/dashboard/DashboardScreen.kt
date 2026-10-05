@@ -43,13 +43,12 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
@@ -57,26 +56,18 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import io.github.coderirse.watchdog.R
 import io.github.coderirse.watchdog.di.LocalAppContainer
 import io.github.coderirse.watchdog.data.model.BalanceSnapshot
-import io.github.coderirse.watchdog.data.model.DailyModelUsage
 import io.github.coderirse.watchdog.data.model.PlatformType
 import io.github.coderirse.watchdog.data.model.QuotaInfo
 import io.github.coderirse.watchdog.data.model.QuotaState
-import io.github.coderirse.watchdog.data.model.sumCnyBalance
 import io.github.coderirse.watchdog.ui.components.DailyUsageCard
 import io.github.coderirse.watchdog.ui.components.PlatformQuotaCard
 import io.github.coderirse.watchdog.ui.theme.WatchDogTheme
-import io.github.coderirse.watchdog.ui.theme.balanceNumeral
-import io.github.coderirse.watchdog.ui.theme.onBrand
-import io.github.coderirse.watchdog.ui.theme.onBrandSecondary
 import io.github.coderirse.watchdog.ui.weblogin.WebLoginActivity
-import androidx.compose.ui.platform.LocalContext
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -85,10 +76,12 @@ fun DashboardScreen(
 ) {
     val appContainer = LocalAppContainer.current
     val viewModel: DashboardViewModel = viewModel(factory = DashboardViewModel.factory(appContainer))
-    val quotaState by viewModel.quotaState.collectAsState()
-    val isRefreshing by viewModel.isRefreshing.collectAsState()
-    val isOffline by viewModel.isOffline.collectAsState()
-    val autoRefreshInterval by viewModel.autoRefreshInterval.collectAsState()
+    // collectAsStateWithLifecycle：后台时停止收集，避免无谓重组（依赖已引入但此前未用）
+    val quotaState by viewModel.quotaState.collectAsStateWithLifecycle()
+    val isRefreshing by viewModel.isRefreshing.collectAsStateWithLifecycle()
+    val isOffline by viewModel.isOffline.collectAsStateWithLifecycle()
+    val autoRefreshInterval by viewModel.autoRefreshInterval.collectAsStateWithLifecycle()
+    val balanceHistory by viewModel.balanceHistory.collectAsStateWithLifecycle()
     val lifecycleOwner = LocalLifecycleOwner.current
     val context = LocalContext.current
 
@@ -127,10 +120,11 @@ fun DashboardScreen(
         isRefreshing = isRefreshing,
         isOffline = isOffline,
         autoRefreshInterval = autoRefreshInterval,
+        balanceHistory = balanceHistory,
         onRefresh = { viewModel.refresh() },
         onNavigateToSettings = onNavigateToSettings,
         onRelogin = { platform ->
-            reloginLauncher.launch(WebLoginActivity.intent(context, platform))
+            reloginLauncher.launch(WebLoginActivity.uiIntent(context, platform))
         }
     )
 }
@@ -142,6 +136,7 @@ fun DashboardContent(
     isRefreshing: Boolean,
     isOffline: Boolean,
     autoRefreshInterval: Int,
+    balanceHistory: List<BalanceSnapshot> = emptyList(),
     onRefresh: () -> Unit,
     onNavigateToSettings: () -> Unit,
     onRelogin: (PlatformType) -> Unit = {}
@@ -185,19 +180,20 @@ fun DashboardContent(
         ) {
             when (val state = quotaState) {
                 is QuotaState.Loading -> DashboardSkeleton()
-                is QuotaState.Success -> QuotaListOrEmpty(
+                // Success 与 PartialSuccess 渲染完全一致（失败平台由各自卡片呈现），共用 QuotaList
+                is QuotaState.Success -> QuotaList(
                     quotas = state.quotas,
                     autoRefreshInterval = autoRefreshInterval,
                     showOfflineBanner = isOffline,
-                    dailyModelUsage = state.quotas.flatMap { it.dailyModelUsage },
+                    balanceHistory = balanceHistory,
                     onNavigateToSettings = onNavigateToSettings,
                     onRelogin = onRelogin
                 )
-                is QuotaState.PartialSuccess -> QuotaListOrEmpty(
+                is QuotaState.PartialSuccess -> QuotaList(
                     quotas = state.quotas,
                     autoRefreshInterval = autoRefreshInterval,
                     showOfflineBanner = isOffline,
-                    dailyModelUsage = state.quotas.flatMap { it.dailyModelUsage },
+                    balanceHistory = balanceHistory,
                     onNavigateToSettings = onNavigateToSettings,
                     onRelogin = onRelogin
                 )
@@ -207,99 +203,14 @@ fun DashboardContent(
     }
 }
 
-// ===== Hero 总览卡 =====
-
-private val heroBrush: Brush = Brush.linearGradient(
-    colors = listOf(Color(0xFF1E3A8A), Color(0xFF06B6D4))
-)
-
-private fun formatClockTime(t: Long): String =
-    SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(t))
-
-@Composable
-fun HeroOverviewCard(quotas: List<QuotaInfo>, modifier: Modifier = Modifier) {
-    val configured = quotas.filter { it.isConfigured }
-    val abnormalCount = configured.count { it.errorMessage != null }
-    // 金额汇总：仅计按量付费且以 CNY 计价的平台；
-    // 订阅配额平台无余额概念，GLM 等以 Token 计价的平台不能混入金额求和
-    val totalBalance = quotas.sumCnyBalance()
-    val hasSubscription = configured.any { it.isSubscriptionMode }
-    val lastRefresh = configured.maxOfOrNull { it.lastUpdated }
-
-    Card(
-        modifier = modifier.fillMaxWidth(),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
-    ) {
-        Box(modifier = Modifier.fillMaxWidth().background(heroBrush)) {
-            Column(modifier = Modifier.padding(20.dp)) {
-                Text(
-                    stringResource(R.string.hero_total_balance),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = onBrandSecondary
-                )
-                Spacer(modifier = Modifier.height(2.dp))
-                Row(verticalAlignment = Alignment.Bottom) {
-                    Text(
-                        text = String.format(Locale.US, "%.2f", totalBalance),
-                        style = balanceNumeral,
-                        color = onBrand
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                        text = "CNY",
-                        style = MaterialTheme.typography.titleSmall,
-                        color = onBrandSecondary,
-                        modifier = Modifier.padding(bottom = 4.dp)
-                    )
-                }
-                if (hasSubscription) {
-                    Spacer(modifier = Modifier.height(2.dp))
-                    Text(
-                        stringResource(R.string.hero_subscription_excluded),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = onBrandSecondary
-                    )
-                }
-                Spacer(modifier = Modifier.height(12.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        stringResource(
-                            R.string.hero_platform_stats,
-                            configured.size, quotas.size,
-                            if (abnormalCount == 0) stringResource(R.string.hero_status_all_normal)
-                            else stringResource(R.string.hero_status_abnormal, abnormalCount)
-                        ),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = onBrandSecondary
-                    )
-                    if (lastRefresh != null) {
-                        Text(
-                            stringResource(
-                                R.string.hero_last_refresh,
-                                formatClockTime(lastRefresh)
-                            ),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = onBrandSecondary
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
-
 // ===== 列表 / 空状态 =====
 
 @Composable
-private fun QuotaListOrEmpty(
+private fun QuotaList(
     quotas: List<QuotaInfo>,
     autoRefreshInterval: Int,
     showOfflineBanner: Boolean,
-    dailyModelUsage: List<DailyModelUsage>,
+    balanceHistory: List<BalanceSnapshot>,
     onNavigateToSettings: () -> Unit,
     onRelogin: (PlatformType) -> Unit = {}
 ) {
@@ -309,6 +220,7 @@ private fun QuotaListOrEmpty(
     }
     val configuredQuotas = quotas.filter { it.isConfigured }
     val pendingCount = quotas.size - configuredQuotas.size
+    val dailyModelUsage = remember(quotas) { quotas.flatMap { it.dailyModelUsage } }
 
     LazyColumn(
         contentPadding = PaddingValues(16.dp),
@@ -321,11 +233,14 @@ private fun QuotaListOrEmpty(
         }
 
         item(key = "hero_overview") {
-            HeroOverviewCard(quotas = quotas)
+            HeroOverviewCard(quotas = quotas, balanceHistory = balanceHistory)
         }
 
-        item(key = "daily_usage") {
-            DailyUsageCard(usages = dailyModelUsage)
+        // 无 Token 用量数据时整卡不渲染：避免空面板占据首屏第二位置
+        if (dailyModelUsage.isNotEmpty()) {
+            item(key = "daily_usage") {
+                DailyUsageCard(usages = dailyModelUsage)
+            }
         }
 
         items(configuredQuotas, key = { it.platform.name }) { quota ->
@@ -442,7 +357,8 @@ private fun ErrorContent(message: String, onRetry: () -> Unit) {
             )
             Spacer(modifier = Modifier.height(12.dp))
             Text(
-                text = message,
+                // message 为 VM 透出的诊断明细（平台名：原因）；空时回退到通用网络错误文案
+                text = message.ifBlank { stringResource(R.string.dashboard_error_network) },
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.error,
                 textAlign = TextAlign.Center
@@ -519,6 +435,7 @@ private fun OfflineBanner() {
     }
 }
 
+
 // ===== Preview =====
 
 private val previewQuotas = listOf(
@@ -538,6 +455,13 @@ private val previewQuotas = listOf(
     QuotaInfo.error(PlatformType.GLM, "HTTP 401")
 )
 
+private val previewHistory = (0 until 20).map { i ->
+    BalanceSnapshot(
+        timestamp = System.currentTimeMillis() - (19 - i) * 86_400_000L,
+        balance = 42.0 + (i % 5) * 1.8
+    )
+}
+
 @Composable
 private fun DashboardPreviewContent() {
     DashboardContent(
@@ -545,6 +469,7 @@ private fun DashboardPreviewContent() {
         isRefreshing = false,
         isOffline = false,
         autoRefreshInterval = 5,
+        balanceHistory = previewHistory,
         onRefresh = {},
         onNavigateToSettings = {}
     )
@@ -560,24 +485,4 @@ private fun DashboardPreviewLight() {
 @Composable
 private fun DashboardPreviewDark() {
     WatchDogTheme { DashboardPreviewContent() }
-}
-
-@Preview(name = "Hero总览卡-浅色", showBackground = true)
-@Composable
-private fun HeroOverviewCardPreviewLight() {
-    WatchDogTheme {
-        Box(modifier = Modifier.padding(16.dp)) {
-            HeroOverviewCard(quotas = previewQuotas)
-        }
-    }
-}
-
-@Preview(name = "Hero总览卡-深色", showBackground = true, uiMode = Configuration.UI_MODE_NIGHT_YES)
-@Composable
-private fun HeroOverviewCardPreviewDark() {
-    WatchDogTheme {
-        Box(modifier = Modifier.padding(16.dp)) {
-            HeroOverviewCard(quotas = previewQuotas)
-        }
-    }
 }
